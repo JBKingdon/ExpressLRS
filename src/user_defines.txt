@@ -19,7 +19,7 @@
 #-DRegulatory_Domain_FCC_915
 
 ### Bands for SX1280 (2400MHz) ###
-#-DRegulatory_Domain_ISM_2400
+-DRegulatory_Domain_ISM_2400
 
 ### STEP2: ### 
 ### DEFINE ONE AND ONLY ONE OF THE SWITCH ENCODING OPTIONS ##
@@ -36,7 +36,7 @@
 # Channel 4 is reduced to 10bit resolution in order to get the 5th bit needed
 # for sequential switch encoding.
 
-#-DHYBRID_SWITCHES_8
+-DHYBRID_SWITCHES_8
 
 # Hybrid switches
 # The first switch is treated as a low-latency switch to be used for arm/disarm.
@@ -57,6 +57,6 @@
 
 -DJUST_BEEP_ONCE     #B eep only once (applies to TX modules with buzzer)
 
--DUSE_UART2    # Uncomment to use UART2 for MSP comms on the TX module
+#-DUSE_UART2    # Uncomment to use UART2 for MSP comms on the TX module
 
--DUSE_ESP8266_BACKPACK
+#-DUSE_ESP8266_BACKPACK
