@@ -84,6 +84,13 @@ void ICACHE_RAM_ATTR SX1280Driver::Config(SX1280_RadioLoRaBandwidths_t bw, SX128
 
 void ICACHE_RAM_ATTR SX1280Driver::SetOutputPower(int8_t power)
 {
+    #if defined(TARGET_TX_ESP32_E28_SX1280_V1) || defined(TARGET_TX_PICO_E28_SX1280_V1) 
+    if (power > 0) {
+        Serial.println("power capped for E28");
+        power = 0;
+    }
+    #endif
+
     uint8_t buf[2];
     buf[0] = power + 18;
     buf[1] = (uint8_t)SX1280_RADIO_RAMP_04_US;
@@ -340,5 +347,33 @@ bool ICACHE_RAM_ATTR SX1280Driver::GetFrequencyErrorbool()
 }
 
 void ICACHE_RAM_ATTR SX1280Driver::SetPPMoffsetReg(int32_t offset) { return; };
-int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketRSSI() { return 0; };
-int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketSNR() { return 0; };
+
+
+// TODO get rssi/snr can be made more efficient by using a single call to get
+// both values.
+int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketRSSI()
+{
+    uint8_t status[2];
+
+    hal.ReadCommand(SX1280_RADIO_GET_PACKETSTATUS, status, 2);
+    LastPacketRSSI = -(int8_t)(status[0]/2);
+    // Serial.print("rssi read "); Serial.println(LastPacketRSSI);
+
+    // grab snr while we have the buffer
+    LastPacketSNR = (int8_t)(status[1]/4);
+
+    return LastPacketRSSI;
+}
+
+int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketSNR()
+{
+    uint8_t status[2];
+
+    hal.ReadCommand(SX1280_RADIO_GET_PACKETSTATUS, status, 2);
+    LastPacketSNR = ((int8_t)status[1])/4;
+
+    // grab rssi while we have the buffer
+    LastPacketRSSI = -(int8_t)(status[0]/2);
+
+    return LastPacketSNR;
+}

@@ -6,7 +6,7 @@
 #if defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433)
 #include "SX127xDriver.h"
 SX127xDriver Radio;
-#elif Regulatory_Domain_ISM_2400
+#elif defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
 #include "SX1280Driver.h"
 SX1280Driver Radio;
 #endif
@@ -381,7 +381,6 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
   //if ((millis() > ((SyncPacketLastSent + SYNC_PACKET_SEND_INTERVAL_RX_CONN)) && (Radio.currFreq == GetInitialFreq())) || ((isRXconnected == false) && (Radio.currFreq == GetInitialFreq())))
   if ((millis() > (SyncPacketLastSent + SyncInterval)) && (Radio.currFreq == GetInitialFreq()) && ((NonceTX) % ExpressLRS_currAirRate_Modparams->FHSShopInterval == 1)) // sync just after we changed freqs (helps with hwTimer.init() being in sync from the get go)
   {
-
     GenerateSyncPacketData();
     SyncPacketLastSent = millis();
     ChangeAirRateSentUpdate = true;
@@ -623,7 +622,8 @@ void setup()
   Radio.currFreq = GetInitialFreq(); //set frequency first or an error will occur!!!
   Radio.Begin();
   //Radio.SetSyncWord(UID[3]);
-  POWERMGNT.setDefaultPower();
+  // POWERMGNT.setDefaultPower();
+  Radio.SetOutputPower(-13);
 
   SetRFLinkRate(RATE_DEFAULT); // fastest rate by default
   crsf.Begin();
@@ -733,6 +733,7 @@ void OnRFModePacket(mspPacket_t *packet)
   }
 }
 
+#ifdef NOPE
 void OnTxPowerPacket(mspPacket_t *packet)
 {
   // Parse the TX power
@@ -771,6 +772,7 @@ void OnTxPowerPacket(mspPacket_t *packet)
     break;
   }
 }
+#endif
 
 void OnTLMRatePacket(mspPacket_t *packet)
 {
@@ -805,7 +807,7 @@ void ProcessMSPPacket(mspPacket_t *packet)
       OnRFModePacket(packet);
       break;
     case MSP_ELRS_TX_PWR:
-      OnTxPowerPacket(packet);
+      // OnTxPowerPacket(packet);
       break;
     case MSP_ELRS_TLM_RATE:
       OnTLMRatePacket(packet);

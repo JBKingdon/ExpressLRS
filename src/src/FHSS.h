@@ -4,7 +4,7 @@
 
 #if defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433)
 #include "SX127xDriver.h"
-#elif Regulatory_Domain_ISM_2400
+#elif defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
 #include "SX1280Driver.h"
 #endif
 
@@ -140,6 +140,34 @@ const uint32_t FHSSfreqs[] = {
     925700000,
     926300000,
     926900000};
+#elif Regulatory_Domain_ISM_2400_NA
+// a more conservative frequency table with wider spacing.
+const uint32_t FHSSfreqs[] = {
+    2424000000,
+    2402000000,
+    2436000000,
+    2430000000,
+    2416000000,
+    2448000000,
+    2432000000,
+    2446000000,
+    2422000000,
+    2442000000,
+    2414000000,
+    2444000000,
+    2404000000,
+    2434000000,
+    2410000000,
+    2408000000,
+    2440000000,
+    2426000000,
+    2428000000,
+    2418000000,
+    2412000000,
+    2406000000,
+    2438000000,
+    2420000000,
+};
 #elif Regulatory_Domain_ISM_2400
 const uint32_t FHSSfreqs[] = {
     2400400000,

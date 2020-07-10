@@ -7,7 +7,7 @@
 #if defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433)
 #include "SX127xDriver.h"
 SX127xDriver Radio;
-#elif Regulatory_Domain_ISM_2400
+#elif defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
 #include "SX1280Driver.h"
 SX1280Driver Radio;
 #endif
@@ -121,7 +121,7 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
     crsf.LinkStatistics.uplink_RSSI_1 = -1 * rssiDBM; // to match BF
 
     crsf.LinkStatistics.uplink_RSSI_2 = 0;
-    crsf.LinkStatistics.uplink_SNR = Radio.LastPacketSNR * 10;
+    crsf.LinkStatistics.uplink_SNR = Radio.LastPacketSNR; // * 10;
     crsf.LinkStatistics.uplink_Link_quality = linkQuality;
     crsf.LinkStatistics.rf_Mode = 4 - ExpressLRS_currAirRate_Modparams->index;
 
@@ -326,6 +326,7 @@ void ICACHE_RAM_ATTR GotConnection()
 #endif
 }
 
+#ifdef NOPE
 void ICACHE_RAM_ATTR UnpackChannelData_11bit()
 {
     crsf.PackedRCdataOut.ch0 = (Radio.RXdataBuffer[1] << 3) + ((Radio.RXdataBuffer[5] & 0b11100000) >> 5);
@@ -339,6 +340,7 @@ void ICACHE_RAM_ATTR UnpackChannelData_11bit()
     crsf.PackedRCdataOut.ch7 = BIT_to_CRSF(Radio.RXdataBuffer[6] & 0b00000001);
 #endif
 }
+#endif
 
 void ICACHE_RAM_ATTR UnpackChannelData_10bit()
 {
@@ -348,6 +350,7 @@ void ICACHE_RAM_ATTR UnpackChannelData_10bit()
     crsf.PackedRCdataOut.ch3 = UINT10_to_CRSF((Radio.RXdataBuffer[4] << 2) + ((Radio.RXdataBuffer[5] & 0b00000011) >> 0));
 }
 
+#ifdef NOPE
 void ICACHE_RAM_ATTR UnpackMSPData()
 {
     mspPacket_t packet;
@@ -361,6 +364,7 @@ void ICACHE_RAM_ATTR UnpackMSPData()
     packet.addByte(Radio.RXdataBuffer[6]);
     crsf.sendMSPFrameToFC(&packet);
 }
+#endif
 
 void ICACHE_RAM_ATTR ProcessRFPacket()
 {
@@ -413,7 +417,7 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
         break;
 
     case MSP_DATA_PACKET:
-        UnpackMSPData();
+        // UnpackMSPData();
         break;
 
     case TLM_PACKET: //telemetry packet from master

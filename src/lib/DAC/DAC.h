@@ -10,7 +10,7 @@
 extern SX127xDriver Radio;
 #endif
 
-#if defined(Regulatory_Domain_ISM_2400)
+#if defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
 #include "SX1280Driver.h"
 extern SX1280Driver Radio;
 #endif

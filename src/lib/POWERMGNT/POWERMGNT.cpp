@@ -3,7 +3,7 @@
 
 #if defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433)
 extern SX127xDriver Radio;
-#elif Regulatory_Domain_ISM_2400
+#elif defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
 extern SX1280Driver Radio;
 #endif
 
@@ -58,8 +58,8 @@ void POWERMGNT::setPower(PowerLevels_e Power)
     return;
 #endif
 
-#ifdef TARGET_TX_ESP32_E28_SX1280_V1
-    Radio.SetOutputPower(0);
+#if defined(TARGET_TX_ESP32_E28_SX1280_V1) || defined(TARGET_TX_PICO_E28_SX1280_V1)
+    Radio.SetOutputPower(-7);
     CurrentPower = Power;
     return;
 #endif

@@ -73,7 +73,11 @@ void SX1280Hal::init()
 
 #ifdef PLATFORM_ESP32
     SPI.begin(GPIO_PIN_SCK, GPIO_PIN_MISO, GPIO_PIN_MOSI, -1); // sck, miso, mosi, ss (ss can be any GPIO)
+    #ifdef TARGET_TX_PICO_E28_SX1280_V1
+    SPI.setFrequency(8000000);
+    #else
     SPI.setFrequency(18000000);
+    #endif
 #endif
 
 #ifdef PLATFORM_ESP8266
@@ -82,7 +86,8 @@ void SX1280Hal::init()
     //SPI.pins(this->SX1280_SCK, this->SX1280_MISO, this->SX1280_MOSI, -1);
     SPI.setBitOrder(MSBFIRST);
     SPI.setDataMode(SPI_MODE0);
-    SPI.setFrequency(18000000);
+    // SPI.setFrequency(18000000);
+    SPI.setFrequency(8000000);
 #endif
 
 #ifdef PLATFORM_STM32

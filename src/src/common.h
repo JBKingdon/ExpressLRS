@@ -7,7 +7,7 @@
 #include "SX127xDriver.h"
 #endif
 
-#if defined(Regulatory_Domain_ISM_2400)
+#if defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
 #include "SX1280Driver.h"
 #endif
 
@@ -100,7 +100,7 @@ typedef struct expresslrs_mod_settings_s
 
 #endif
 
-#if defined(Regulatory_Domain_ISM_2400)
+#if defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
 #define RATE_MAX 4
 #define RATE_DEFAULT 1
 typedef struct expresslrs_mod_settings_s

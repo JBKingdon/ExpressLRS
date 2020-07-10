@@ -241,3 +241,28 @@ https://github.com/jaxxzer
 #define GPIO_PIN_RCSIGNAL_RX 13
 #define GPIO_PIN_RCSIGNAL_TX 13
 #endif
+
+#ifdef TARGET_TX_PICO_E28_SX1280_V1
+#define GPIO_PIN_NSS         10
+#define GPIO_PIN_BUSY        38
+#define GPIO_PIN_DIO0        -1
+#define GPIO_PIN_DIO1        37
+#define GPIO_PIN_MOSI        18
+#define GPIO_PIN_MISO        23
+#define GPIO_PIN_SCK          5
+#define GPIO_PIN_RST         32
+#define GPIO_PIN_RX_ENABLE    9
+#define GPIO_PIN_TX_ENABLE   33
+// #define GPIO_PIN_TX_ENABLE   25     // unconnected, harmless
+// #define GPIO_PIN_OLED_SDA 21
+// #define GPIO_PIN_OLED_SCK 22
+#define GPIO_PIN_RCSIGNAL_RX 15
+#define GPIO_PIN_RCSIGNAL_TX 15
+#define GPIO_PIN_BLUE_LED     2 // led1
+#define GPIO_PIN_GREEN_LED   13 // led2
+
+#define GPIO_PIN_LED         GPIO_PIN_BLUE_LED  // convenince for compatability
+
+#define GPIO_PIN_DEBUG       21
+#define GPIO_PIN_BUTTON       0
+#endif
