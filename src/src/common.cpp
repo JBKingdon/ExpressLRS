@@ -29,17 +29,17 @@ extern SX1280Driver Radio;
 
 expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
     // enum_rate,       bw,                 sf,                 cr,            interval, TLMinterval, FHSShopInterval, PreambleLen
-    {0, RATE_500HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF5, SX1280_LORA_CR_4_5,   2000, TLM_RATIO_1_128,      2,          12},
-    {1, RATE_250HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF6, SX1280_LORA_CR_LI_4_7, 4000, TLM_RATIO_1_64,      8,          12},
-    {2, RATE_150HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF7, SX1280_LORA_CR_LI_4_7, 6666, TLM_RATIO_1_32,      4,          12},
-    {3, RATE_50HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF9, SX1280_LORA_CR_4_5,    20000, TLM_RATIO_NO_TLM,    2,          12}};
+    {0, RATE_500HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF5, SX1280_LORA_CR_4_5,    2000,  TLM_RATIO_1_128,     2,          12},
+    {1, RATE_250HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF6, SX1280_LORA_CR_LI_4_7, 4000,  TLM_RATIO_1_64,      8,          12},
+    {2, RATE_150HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF7, SX1280_LORA_CR_LI_4_7, 7692,  TLM_RATIO_1_32,      4,          12},  // 130Hz
+    {3, RATE_50HZ,  SX1280_LORA_BW_0800, SX1280_LORA_SF8, SX1280_LORA_CR_LI_4_7,13333, TLM_RATIO_NO_TLM,     2,          12}}; //  75Hz
 
 expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
     //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected
     {0, RATE_500HZ, -112, 4380, 3500,               1000,                       250,                       5000}, // ~ 3 sync packets
-    {1, RATE_250HZ, -112, 4380, 3500,               1000,                       250,                       5000}, // ~ 3 sync packets
-    {2, RATE_150HZ, -117, 8770, 3500,               4000,                       250,                       5000},
-    {3, RATE_50HZ, -120, 17540, 3500,               6000,                       500,                       5000}};
+    {1, RATE_250HZ, -108, 3567, 3500,               1000,                       250,                       5000}, // ~ 3 sync packets
+    {2, RATE_150HZ, -112, 6660, 3500,               4000,                       250,                       5000},
+    {3, RATE_50HZ, -120, 12059, 3500,               6000,                       500,                       5000}};
 
 #endif
 

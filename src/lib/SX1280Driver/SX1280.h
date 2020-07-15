@@ -109,6 +109,8 @@ public:
 
     int8_t ICACHE_RAM_ATTR GetLastPacketRSSI();
     int8_t ICACHE_RAM_ATTR GetLastPacketSNR();
+    static uint16_t ICACHE_RAM_ATTR GetIrqStatus();
+
 
 private:
 };

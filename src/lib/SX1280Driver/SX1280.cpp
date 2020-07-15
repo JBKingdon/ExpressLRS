@@ -68,7 +68,7 @@ void SX1280Driver::Begin()
     hal.WriteCommand(SX1280_RADIO_SET_PACKETTYPE, SX1280_PACKET_TYPE_LORA); //Step 2: set packet type to LoRa
     this->ConfigModParams(currBW, currSF, currCR);                          //Step 5: Configure Modulation Params
     hal.WriteCommand(SX1280_RADIO_SET_AUTOFS, 0x01);                        //enable auto FS
-    this->SetPacketParams(12, SX1280_LORA_PACKET_IMPLICIT, 8, SX1280_LORA_CRC_OFF, SX1280_LORA_IQ_NORMAL);
+    this->SetPacketParams(12, SX1280_LORA_PACKET_IMPLICIT, 8, SX1280_LORA_CRC_ON, SX1280_LORA_IQ_NORMAL);
     this->SetFrequency(this->currFreq); //Step 3: Set Freq
     this->SetFIFOaddr(0x00, 0x00);      //Step 4: Config FIFO addr
     this->SetDioIrqParams(SX1280_IRQ_RADIO_ALL, SX1280_IRQ_TX_DONE | SX1280_IRQ_RX_DONE, SX1280_IRQ_RADIO_NONE, SX1280_IRQ_RADIO_NONE); //
@@ -78,7 +78,7 @@ void ICACHE_RAM_ATTR SX1280Driver::Config(SX1280_RadioLoRaBandwidths_t bw, SX128
 {
     this->SetMode(SX1280_MODE_STDBY_XOSC);
     ConfigModParams(bw, sf, cr);
-    SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, 8, SX1280_LORA_CRC_OFF, SX1280_LORA_IQ_NORMAL); // TODO don't make static etc.
+    SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, 8, SX1280_LORA_CRC_ON, SX1280_LORA_IQ_NORMAL); // TODO don't make static etc.
     SetFrequency(freq);
 }
 
@@ -280,10 +280,19 @@ void SX1280Driver::TXnb(volatile uint8_t *data, uint8_t length)
 
 void SX1280Driver::RXnbISR()
 {
-    instance->currOpmode = SX1280_MODE_FS;
+    instance->currOpmode = SX1280_MODE_FS; // XXX is this true? Unless we're doing single rx with timeout, we'll still be in rx mode
+
+    // grab the status before we clear it
+    uint16_t irqStat = GetIrqStatus();
     instance->ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
+
+    // Need to check for hardware crc error
+    if (irqStat & 0b1000000) {
+        // Serial.println("bad hw crc");
+        return;
+    }
+
     uint8_t FIFOaddr = instance->GetRxBufferAddr();
-    //hal.ReadBuffer(instance->GetRxBufferAddr(), instance->RXdataBuffer, 8);
     hal.ReadBuffer(FIFOaddr, instance->RXdataBuffer, 8);
     instance->RXdoneCallback();
 }
@@ -376,4 +385,13 @@ int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketSNR()
     LastPacketRSSI = -(int8_t)(status[0]/2);
 
     return LastPacketSNR;
+}
+
+uint16_t ICACHE_RAM_ATTR SX1280Driver::GetIrqStatus()
+{
+    uint8_t status[2];
+
+    hal.ReadCommand(SX1280_RADIO_GET_IRQSTATUS, status, 2);
+
+    return (((uint16_t)status[0]) << 8) + status[1];
 }
