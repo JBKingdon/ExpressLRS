@@ -1,9 +1,23 @@
 #include <Arduino.h>
+#include <cmath>
 #include "FIFO.h"
+#include <EEPROM.h>
 #include "utils.h"
 #include "common.h"
-#include <cmath>
 #include "LowPassFilter.h"
+#include "1AUDfilter.h"
+// #include "1AUDfilterInt.h"
+
+// #include "esp32-hal-uart.h"
+
+// #define DEBUG_SUPPRESS
+
+// #define USE_DMA_ADC
+
+#ifdef USE_DMA_ADC
+#include "dmaAdc.h"
+#endif
+
 
 #if defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433)
 #include "SX127xDriver.h"
@@ -11,7 +25,8 @@ SX127xDriver Radio;
 #elif defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
 #include "SX1280Driver.h"
 SX1280Driver Radio;
-static int radioPower = MAX_PRE_PA_POWER;
+// static int radioPower = MAX_PRE_PA_POWER;
+static int radioPower = -10; // arbitrary but safe default
 #endif
 
 #include "CRSF.h"
@@ -33,9 +48,16 @@ static int radioPower = MAX_PRE_PA_POWER;
 #ifdef PLATFORM_ESP32
 #include "ESP32_hwTimer.h"
 #include <driver/adc.h>
+#ifdef USE_TFT
 #include <TFT_eSPI.h>
-#include "OneEuroFilter.h"
 #endif
+#include "OneEuroFilter.h"
+// #include "driver/uart.h"
+
+#ifdef USE_IO_COPRO
+#include "UI_CoPro.h"
+#endif // USE_IO_COPRO
+#endif // PLATFORM_ESP32
 
 #ifdef TARGET_R9M_TX
 #include "DAC.h"
@@ -56,6 +78,19 @@ R9DAC R9DAC;
 #define MSP_PACKET_SEND_INTERVAL 200
 #define SYNC_PACKET_SEND_INTERVAL_RX_LOST 1000 // how often to send the SYNC_PACKET packet (ms) when there is no response from RX
 #define SYNC_PACKET_SEND_INTERVAL_RX_CONN 5000 // how often to send the SYNC_PACKET packet (ms) when there we have a connection
+
+
+// struct for saving defaults in eeprom
+// TODO move to a .h
+typedef struct {
+
+  uint8_t airRateIndex;
+  int8_t  prePApower;
+  uint8_t tlmInterval;
+  uint8_t crc;
+
+} defaultSettings_t;
+
 
 String DebugOutput;
 
@@ -99,6 +134,9 @@ bool ChangeAirRateSentUpdate = false;
 
 bool WaitRXresponse = false;
 
+bool saveNeeded = false;
+bool sendStateNeeded = false;
+
 // Used to indicate that a link rate change needs to be done
 int8_t nextRFLinkRate = -1;
 #define NONE_PENDING 127
@@ -123,34 +161,36 @@ void OnRFModePacket(mspPacket_t *packet);
 void OnTxPowerPacket(mspPacket_t *packet);
 void OnTLMRatePacket(mspPacket_t *packet);
 
-uint8_t baseMac[6];
+// uint8_t baseMac[6];
 
 // ===================================
 // variables for direct attached gimbals
 
+#ifdef USE_TFT
 TFT_eSPI tft = TFT_eSPI();
-
 static bool lcdNeedsRedraw = true;
+#endif
 
+// unsigned long tLeaveISR;
+
+unsigned long tRF, tADC;
 static volatile uint16_t cpuLoad;
 LPF LPF_cpuLoad(3,1);
 
+uint32_t nADCgroups = 0;
+
 // variables for checking ADC performance
-static unsigned long minADC=99999, maxADC=0, totalADC=0;
+// static unsigned long minADC=99999, maxADC=0, totalADC=0;
 
 // time when arm switch is enabled/disabled
-static unsigned long armStartTime = 0;
-static unsigned long armEndTime = 0;
+// static unsigned long armStartTime = 0;
+// static unsigned long armEndTime = 0;
 
-// channel LPFs
-LPF LPF_pitch(4,1);
-LPF LPF_roll(4,1);
-LPF LPF_throttle(4,1);
-LPF LPF_yaw(4,1);
 
 // and the battery sensor
-LPF LPF_battery(3);
+// LPF LPF_battery(3);
 
+#ifdef USE_1E
 // testing the 1e filter
 double frequency = 800 ; // Hz - is set from setRFLinkRate, so this value isn't important
 double mincutoff = 0.35 ; // min=.4, b=.06 looks pretty good on bench test. Maybe try slightly lower min & higher beta?
@@ -161,159 +201,168 @@ OneEuroFilter f_roll(frequency, mincutoff, beta, dcutoff);
 OneEuroFilter f_pitch(frequency, mincutoff, beta, dcutoff);
 OneEuroFilter f_throttle(frequency, mincutoff, beta, dcutoff);
 OneEuroFilter f_yaw(frequency, mincutoff, beta, dcutoff);
+#endif // USE_1E
+
+
+// The 1AUD
+
+float minCutoff =  20;
+float maxCutoff = 200;
+float beta = 0.01f;
+// slewLimit is now steps per second and gets auto converted when sample rate changes
+float slewLimit = 100000.0f;
+
+#ifdef USE_DMA_ADC
+float sampleRate = float(TOTAL_SAMPLE_RATE) / GROUP_SAMPLE_LENGTH;
+#else
+// interval is in us
+// rate is (1000000 / interval) * oversamples and oversamples is interval/200, so rate is
+// 1000000 / 200  = 5000
+float sampleRate = 5000;
+#endif // not USE_DMA_ADC
+
+float dCutoff = 50.0f;
+
+OneAUDfilter aud_roll(minCutoff, maxCutoff, beta, sampleRate, dCutoff, slewLimit);
+OneAUDfilter aud_pitch(minCutoff, maxCutoff, beta, sampleRate, dCutoff, slewLimit);
+OneAUDfilter aud_yaw(minCutoff, maxCutoff, beta, sampleRate, dCutoff, slewLimit);
+OneAUDfilter aud_throttle(minCutoff, maxCutoff, beta, sampleRate, dCutoff, slewLimit);
+
+// test the int impl of 1aud
+
+// OneAUDfilterInt audI_roll(minCutoff, maxCutoff, int(1.0f/beta), sampleRate, dCutoff, slewLimit);
+// OneAUDfilterInt audI_pitch(minCutoff, maxCutoff, int(1.0f/beta), sampleRate, dCutoff, slewLimit);
+// OneAUDfilterInt audI_yaw(minCutoff, maxCutoff, int(1.0f/beta), sampleRate, dCutoff, slewLimit);
+// OneAUDfilterInt audI_throttle(minCutoff, maxCutoff, int(1.0f/beta), sampleRate, dCutoff, slewLimit);
+
+TaskHandle_t readCoProTask, readADCsTaskHandle, readGimbalsDMATaskHandle;
+
+// static QueueHandle_t copro_uart_queue;
 
 // -----------------------------------
+#ifdef USE_DMA_ADC
+void writePatternTableEntry(adc_hal_digi_pattern_table_t ptEntry, const uint32_t pattern_index)
+{
+  uint32_t tab;
+  uint8_t index = pattern_index / 4;
+  uint8_t offset = (pattern_index % 4) * 8;
+
+  tab = SYSCON.saradc_sar1_patt_tab[index];   // Read old register value
+  tab &= (~(0xFF000000 >> offset));           // clear old data
+  tab |= ((uint32_t)ptEntry.val << 24) >> offset; // Fill in the new data
+  SYSCON.saradc_sar1_patt_tab[index] = tab;   // Write back
+}
+
+void initI2S(void)
+{
+    i2s_config_t i2s_config = {
+        .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_ADC_BUILT_IN),
+        .sample_rate = TOTAL_SAMPLE_RATE,
+        .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,  // stops the sample rate being doubled vs LEFT_RIGHT
+        .communication_format = I2S_COMM_FORMAT_I2S_MSB,
+        .intr_alloc_flags = 0,
+        .dma_buf_count = 16,
+        .dma_buf_len = GROUP_SAMPLE_LENGTH * 2,
+        .use_apll = 1,
+        .tx_desc_auto_clear = 1,
+        .fixed_mclk = 1
+    };
+
+    //install and start i2s driver
+    i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
+
+    // i2s_stop(I2S_NUM_0);
+    //init ADC pad
+    i2s_set_adc_mode(ADC_UNIT_1, ADC1_CHANNEL_0);
+
+    // make sure all the anlog channels are setup
+    // currently using 0, 3, 6, 7
+    pinMode(ADC1_CHANNEL_3_GPIO_NUM, ANALOG);
+    pinMode(ADC1_CHANNEL_6_GPIO_NUM, ANALOG);
+    pinMode(ADC1_CHANNEL_7_GPIO_NUM, ANALOG);
+
+    // Now we need to set the pattern table
+    // TODO do a 4x loop unroll and bin?
+
+    // adc_hal_digi_pattern_table_t pt_entry[4];
+
+    // pt_entry[0].channel = ADC1_CHANNEL_0;
+    // pt_entry[1].channel = ADC1_CHANNEL_3;
+    // pt_entry[2].channel = ADC1_CHANNEL_6;
+    // pt_entry[3].channel = ADC1_CHANNEL_7;
+
+    // // set the common bits and write to the hardware
+    // for(int i=0; i<4; i++) {
+    //   pt_entry[i].atten = ADC_ATTEN_DB_6;
+    //   pt_entry[i].bit_width = ADC_WIDTH_BIT_12;
+    //   writePatternTableEntry(pt_entry[i], i);
+    // }
+
+    // SYSCON.saradc_ctrl.sar1_patt_len = 3; // NB value to set is nPatterns-1
+
+    adc_hal_digi_pattern_table_t pt_entry[4];
+    uint8_t channels[4] = {ADC1_CHANNEL_0, ADC1_CHANNEL_3, ADC1_CHANNEL_6, ADC1_CHANNEL_7};
+
+    for(int i=0; i<4; i++) {
+      pt_entry[i].channel = channels[i];
+      pt_entry[i].atten = ADC_ATTEN_DB_11;
+      pt_entry[i].bit_width = ADC_WIDTH_BIT_12;
+      writePatternTableEntry(pt_entry[i], i);
+    }
+
+    SYSCON.saradc_ctrl.sar1_patt_len = 3; // NB value to set is nPatterns-1
+
+    // set the 'inv' flag so that the results match those from the normal adc read api
+    SYSCON.saradc_ctrl2.sar1_inv = 1;
+}
+#endif // USE_DMA_ADC
 
 void initADC()
 {
+  #ifdef USE_DMA_ADC
+  initI2S();
+  #else
   adc1_config_width(ADC_WIDTH_BIT_12);
 
   // TODO convert from the target PIN numbers to ADC channels
   adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_6);
-  adc1_config_channel_atten(ADC1_CHANNEL_1, ADC_ATTEN_DB_6);
-  adc1_config_channel_atten(ADC1_CHANNEL_2, ADC_ATTEN_DB_6);
   adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_DB_6);
+  adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_6);
+  adc1_config_channel_atten(ADC1_CHANNEL_7, ADC_ATTEN_DB_6);
+  #endif // USE_DMA_ADC
 
   // battery sensor
-  adc2_config_channel_atten(ADC2_CHANNEL_4, ADC_ATTEN_6db);
+  // adc2_config_channel_atten(ADC2_CHANNEL_4, ADC_ATTEN_6db); // moved to copro
 
   // init the battery LPF
-  delay(10);
-  int batRaw;
-  for(int i=0; i<200; i++) {
-    adc2_get_raw(ADC2_CHANNEL_4, ADC_WIDTH_BIT_12, &batRaw);
-    LPF_battery.update(batRaw);
-  }
+  // delay(10);
+  // int batRaw;
+  // for(int i=0; i<200; i++) {
+  //   adc2_get_raw(ADC2_CHANNEL_4, ADC_WIDTH_BIT_12, &batRaw);
+  //   LPF_battery.update(batRaw);
+  // }
 
 }
 
-/**
- * reading the gimbals
- * 
- * POC version, simplistic reading strategy. Investigate more efficient ADC handling
-*/
-void refreshGimbalData()
+// crsf uses a reduced range, and BF expects to see it.
+const static uint32_t MAX_OUT = 1811;
+const static uint32_t MID_OUT =  992;
+const static uint32_t MIN_OUT =  172;
+
+uint32_t scaleYawData(uint16_t raw_adc_yaw)
 {
-  static unsigned int nSamples = 0;
-
-  const unsigned int OVERSAMPLE = (ExpressLRS_currAirRate_Modparams->interval / 250);
-
-  // TODO stop treating reversed differently to non-reversed. Maths can handle signs.
-  // Values as read from the ADC - will change if width or atten are changed
-  // roll is reversed
-  const uint16_t ADC_ROLL_MIN = 667;
-  const uint16_t ADC_ROLL_CTR = 1985;
-  const uint16_t ADC_ROLL_MAX = 3098;
-
+  // non DMA
   // not reversed
-  const uint16_t ADC_PITCH_MIN = 1147;
-  const uint16_t ADC_PITCH_CTR = 2096;
-  const uint16_t ADC_PITCH_MAX = 3125;
+  const static uint16_t ADC_YAW_MIN = 811;
+  const static uint16_t ADC_YAW_CTR = 1951;
+  const static uint16_t ADC_YAW_MAX = 3177;
 
-  // reversed, no centre needed for throttle
-  const uint16_t ADC_THROTTLE_MIN = 825;
-  const uint16_t ADC_THROTTLE_MAX = 3280;
+  // reversed
+  // const static uint16_t ADC_YAW_MIN = 920;
+  // const static uint16_t ADC_YAW_CTR = 2143;
+  // const static uint16_t ADC_YAW_MAX = 3280;
 
-  // not reversed
-  const uint16_t ADC_YAW_MIN = 855;
-  const uint16_t ADC_YAW_CTR = 2018;
-  const uint16_t ADC_YAW_MAX = 3255;
-
-  // the initializers are unnecessary but prevent compiler warnings
-  uint32_t raw_adc_roll     = 0;
-  uint32_t raw_adc_pitch    = 0;
-  uint32_t raw_adc_throttle = 0;
-  uint32_t raw_adc_yaw      = 0;
-
-  // (over)sample the ADC
-  // TODO is it better to interleave the channels or do them one after the other?
-  // for(int i=0; i<OVERSAMPLE; i++) {
-  //   // TODO convert from gpio to adc_channel
-  //   raw_adc_roll     = LPF_roll.update(adc1_get_raw(ADC1_CHANNEL_0));
-  //   raw_adc_pitch    = LPF_pitch.update(adc1_get_raw(ADC1_CHANNEL_1));
-  //   raw_adc_throttle = LPF_throttle.update(adc1_get_raw(ADC1_CHANNEL_2));
-  //   raw_adc_yaw      = LPF_yaw.update(adc1_get_raw(ADC1_CHANNEL_3));
-  // }
-
-  raw_adc_roll = 0;
-  raw_adc_pitch = 0;
-  raw_adc_throttle = 0;
-  raw_adc_yaw = 0;
-  for(int i=0; i<OVERSAMPLE; i++) {
-    // TODO convert from gpio to adc_channel
-    raw_adc_roll     += adc1_get_raw(ADC1_CHANNEL_0);
-    raw_adc_pitch    += adc1_get_raw(ADC1_CHANNEL_1);
-    raw_adc_throttle += adc1_get_raw(ADC1_CHANNEL_2);
-    raw_adc_yaw      += adc1_get_raw(ADC1_CHANNEL_3);
-  }
-  raw_adc_roll     /= OVERSAMPLE;
-  raw_adc_pitch    /= OVERSAMPLE;
-  raw_adc_throttle /= OVERSAMPLE;
-  raw_adc_yaw      /= OVERSAMPLE;
-
-  // todo - use the timestamp system for auto freq?
-  double roll_1e     = f_roll.filter(raw_adc_roll);
-  double pitch_1e    = f_pitch.filter(raw_adc_pitch);
-  double throttle_1e = f_throttle.filter(raw_adc_throttle);
-  double yaw_1e      = f_yaw.filter(raw_adc_yaw);
-
-  // logging for tuning the filter
-  // Serial.print(raw_adc_roll);
-  // Serial.print(" ");Serial.println(roll_1e);
-
-  // convert the doubles back to integers
-  raw_adc_roll     = roll_1e;
-  raw_adc_pitch    = pitch_1e;
-  raw_adc_throttle = throttle_1e;
-  raw_adc_yaw      = yaw_1e;
-
-  nSamples++;
-
-  // limit and scale the results
-
-  // crsf uses a reduced range, and BF expects to see it.
-  const uint32_t MAX_OUT = 1811;
-  const uint32_t MID_OUT =  992;
-  const uint32_t MIN_OUT =  172;
-
-  // roll is reversed
-  uint32_t adc_roll;
-  if (raw_adc_roll <= ADC_ROLL_MIN) {
-    adc_roll = MAX_OUT;
-  } else if (raw_adc_roll >= ADC_ROLL_MAX) {
-    adc_roll = MIN_OUT;
-  } else if (raw_adc_roll > ADC_ROLL_CTR) {
-  // if (raw_adc_roll > ADC_ROLL_CTR) {
-    // high half scaling, with reversed output
-    adc_roll = MID_OUT - (raw_adc_roll - ADC_ROLL_CTR) * (MAX_OUT - MID_OUT) / (ADC_ROLL_MAX - ADC_ROLL_CTR);
-  } else {
-    // low half scaling, with reversed output
-    adc_roll = MID_OUT + ((ADC_ROLL_CTR - raw_adc_roll) * (MID_OUT - MIN_OUT) / (ADC_ROLL_CTR - ADC_ROLL_MIN));
-  }
-
-  // pitch is not reversed
-  uint32_t adc_pitch;
-  if (raw_adc_pitch <= ADC_PITCH_MIN) {
-    adc_pitch = MIN_OUT;
-  } else if (raw_adc_pitch >= ADC_PITCH_MAX) {
-    adc_pitch = MAX_OUT;
-  } else if (raw_adc_pitch > ADC_PITCH_CTR) {
-    // high half scaling
-    adc_pitch = MID_OUT + (raw_adc_pitch - ADC_PITCH_CTR) * (MAX_OUT - MID_OUT) / (ADC_PITCH_MAX - ADC_PITCH_CTR);
-  } else {
-    // low half scaling, with reversed output
-    adc_pitch = MID_OUT - ((ADC_PITCH_CTR - raw_adc_pitch) * (MID_OUT - MIN_OUT) / (ADC_PITCH_CTR - ADC_PITCH_MIN));
-  }
-
-  // throttle is reversed, but doesn't need a centre position
-  uint32_t adc_throttle;
-  if (raw_adc_throttle <= ADC_THROTTLE_MIN) {
-    adc_throttle = MAX_OUT;
-  } else if (raw_adc_throttle >= ADC_THROTTLE_MAX) {
-    adc_throttle = MIN_OUT;
-  } else {
-    adc_throttle = MIN_OUT + ((ADC_THROTTLE_MAX - raw_adc_throttle) * (MAX_OUT - MIN_OUT) / (ADC_ROLL_MAX - ADC_ROLL_MIN));
-  }
 
   // yaw is not reversed
   uint32_t adc_yaw;
@@ -323,27 +372,296 @@ void refreshGimbalData()
     adc_yaw = MAX_OUT;
   } else if (raw_adc_yaw > ADC_YAW_CTR) {
     // high half scaling
-    adc_yaw = MID_OUT + (raw_adc_yaw - ADC_YAW_CTR) * (MAX_OUT - MID_OUT) / (ADC_YAW_MAX - ADC_YAW_CTR);
+    adc_yaw = MID_OUT + (raw_adc_yaw - ADC_YAW_CTR) * (MID_OUT - MIN_OUT) / (ADC_YAW_MAX - ADC_YAW_CTR);
   } else {
-    // low half scaling, with reversed output
-    adc_yaw = MID_OUT - ((ADC_YAW_CTR - raw_adc_yaw) * (MID_OUT - MIN_OUT) / (ADC_YAW_CTR - ADC_YAW_MIN));
+    // low half scaling
+    adc_yaw = MID_OUT - ((ADC_YAW_CTR - raw_adc_yaw) * (MAX_OUT - MID_OUT) / (ADC_YAW_CTR - ADC_YAW_MIN));
   }
 
-  // TODO measure the delay caused by these LPFs and figure out the trade-offs between more
-  // hardware filtering and/or more oversampling.
-  // adc_roll = LPF_roll.update((int32_t)adc_roll);
-  // adc_pitch = LPF_pitch.update((int32_t)adc_pitch);
-  // adc_throttle = LPF_throttle.update((int32_t)adc_throttle);
-  // adc_yaw = LPF_yaw.update((int32_t)adc_yaw);
+  return adc_yaw;
+}
 
-  // dirty hack to try things out. Pretend the data came from openTX
-  crsf.ChannelDataIn[0] = adc_roll;
-  crsf.ChannelDataIn[1] = adc_pitch;
-  crsf.ChannelDataIn[2] = adc_throttle;
-  crsf.ChannelDataIn[3] = adc_yaw;
+uint32_t scaleThrottleData(uint16_t raw_adc_throttle)
+{
+  // non DMA
+  // reversed, no centre needed for throttle
+  const static uint16_t ADC_THROTTLE_MIN = 784;
+  const static uint16_t ADC_THROTTLE_MAX = 3202;
 
+  // not reversed
+  // const static uint16_t ADC_THROTTLE_MIN = 895;
+  // const static uint16_t ADC_THROTTLE_MAX = 3305;
+
+  uint32_t adc_throttle;
+  if (raw_adc_throttle <= ADC_THROTTLE_MIN) {
+    adc_throttle = MAX_OUT;
+  } else if (raw_adc_throttle >= ADC_THROTTLE_MAX) {
+    adc_throttle = MIN_OUT;
+  } else {
+    adc_throttle = MAX_OUT - ((raw_adc_throttle - ADC_THROTTLE_MIN) * (MAX_OUT - MIN_OUT) / (ADC_THROTTLE_MAX - ADC_THROTTLE_MIN));
+  }
+  // Serial.printf("throttle raw %u, scaled %u\n", raw_adc_throttle, adc_throttle);
+  return adc_throttle;
+}
+
+uint32_t scalePitchData(uint16_t raw_adc_pitch)
+{
+  // non-dma
+  // not reversed
+  const static uint16_t ADC_PITCH_MIN = 1098;
+  const static uint16_t ADC_PITCH_CTR = 2024;
+  const static uint16_t ADC_PITCH_MAX = 3040;
+
+  // reversed
+  // const static uint16_t ADC_PITCH_MIN = 1055;
+  // const static uint16_t ADC_PITCH_CTR = 2063;
+  // const static uint16_t ADC_PITCH_MAX = 3007;
+
+  uint32_t adc_pitch;
+  if (raw_adc_pitch <= ADC_PITCH_MIN) {
+    adc_pitch = MIN_OUT;
+  } else if (raw_adc_pitch >= ADC_PITCH_MAX) {
+    adc_pitch = MAX_OUT;
+  } else if (raw_adc_pitch > ADC_PITCH_CTR) {
+    // high half scaling
+    adc_pitch = MID_OUT + (raw_adc_pitch - ADC_PITCH_CTR) * (MAX_OUT - MID_OUT) / (ADC_PITCH_MAX - ADC_PITCH_CTR);
+  } else {
+    // low half scaling
+    adc_pitch = MID_OUT - ((ADC_PITCH_CTR - raw_adc_pitch) * (MID_OUT - MIN_OUT) / (ADC_PITCH_CTR - ADC_PITCH_MIN));
+  }
+
+  return adc_pitch;
+}
+
+
+uint32_t scaleRollData(uint16_t raw_adc_roll)
+{
+  // Values as read from the ADC - will change if width or atten are changed
+
+  // non-dma and new dma
+  // roll is reversed
+  const static uint16_t ADC_ROLL_MIN = 620;
+  const static uint16_t ADC_ROLL_CTR = 1920;
+  const static uint16_t ADC_ROLL_MAX = 3008;
+
+  // old dma
+  // roll is not reversed
+  // const static uint16_t ADC_ROLL_MIN = 1090;
+  // const static uint16_t ADC_ROLL_CTR = 2175;
+  // const static uint16_t ADC_ROLL_MAX = 3470;
+
+
+  // transition smoothly between the high and low scales across the centre
+  // const static float rollHighScale = float(MAX_OUT - MID_OUT) / float(ADC_ROLL_MAX - ADC_ROLL_CTR);
+  // const static float rollLowScale = float(MID_OUT - MIN_OUT) / float(ADC_ROLL_CTR - ADC_ROLL_MIN);
+  // const static float rollScaleRange = rollHighScale - rollLowScale;
+  // define a range over which the scale should transition from one to the other.
+  // const static uint32_t SCALE_TRANSITION_PERCENT = 5;
+  // const static uint32_t SCALE_RANGE = (ADC_ROLL_MAX - ADC_ROLL_MIN) * SCALE_TRANSITION_PERCENT / 100;
+  // const static uint32_t SCALE_RANGE_START = ADC_ROLL_CTR - SCALE_RANGE;
+  // const static uint32_t SCALE_RANGE_END = ADC_ROLL_CTR + SCALE_RANGE;
+
+  // roll is reversed
+  uint32_t adc_roll;
+  
+  if (raw_adc_roll <= ADC_ROLL_MIN) {
+    adc_roll = MAX_OUT;
+  } else if (raw_adc_roll >= ADC_ROLL_MAX) {
+    adc_roll = MIN_OUT;
+  } else if (raw_adc_roll > ADC_ROLL_CTR) {
+    // high half scaling
+    // float activeRollScale = rollHighScale;
+    // // if we're in the transition zone crossfade the scaling factor between the low and high scales
+    // if (raw_adc_roll < SCALE_RANGE_END) {
+    //   activeRollScale = rollLowScale + rollScaleRange * (raw_adc_roll - SCALE_RANGE_START) / SCALE_RANGE;
+    // }
+    adc_roll = MID_OUT - (raw_adc_roll - ADC_ROLL_CTR) * (MID_OUT - MIN_OUT) / (ADC_ROLL_MAX - ADC_ROLL_CTR);
+  } else {
+    // low half scaling
+    // float activeRollScale = rollLowScale;
+    // if (raw_adc_roll > SCALE_RANGE_START) {
+    //   activeRollScale = rollLowScale + rollScaleRange * (raw_adc_roll - SCALE_RANGE_START) / SCALE_RANGE;
+    // }
+    adc_roll = MID_OUT + (ADC_ROLL_CTR - raw_adc_roll) * (MAX_OUT - MID_OUT) / (ADC_ROLL_CTR - ADC_ROLL_MIN);
+  }
+
+  return adc_roll;
+}
+
+#ifdef USE_DMA_ADC
+
+/**
+ * Read the gimbals using DMA
+ * 
+*/
+void readGimbalsViaDMA_task(void *pvParameters)
+{
+  uint16_t buffer[GROUP_SAMPLE_LENGTH];
+
+  for(;;) {
+
+    // read a block of raw adc values
+    size_t bytes_read = 0, total_read = 0;
+    const size_t bytesNeeded = GROUP_SAMPLE_LENGTH * 2;
+
+    // i2s_adc_enable(I2S_NUM_0); // this breaks everything. Probably needs to have the pattern tables setup again after the disable
+
+    while(total_read < bytesNeeded) {
+        // XXX TODO currently always gets everything in 1 call, but needs updating to work properly if it ever needs >1 attempt
+        // add offsets for buffer and subtract total read from needed
+        i2s_read(I2S_NUM_0, (void*) buffer, bytesNeeded, &bytes_read, portMAX_DELAY); // this will wait until enough data is ready
+        // Serial.print("bytes read ");Serial.println(bytes_read);
+        total_read += bytes_read;
+    }
+
+    // i2s_adc_disable(I2S_NUM_0);
+
+    // for perf debug
+    nADCgroups++;
+
+    // uint32_t rawRoll = 0, nRoll = 0;
+    // uint32_t rawYaw = 0, nYaw = 0;
+
+    uint32_t rawRoll=0, rawPitch=0, rawThrottle=0, rawYaw=0;
+    uint32_t nRoll, nPitch, nThrottle, nYaw;
+    nRoll = nPitch = nThrottle = nYaw = 0;
+
+    // for each raw value
+    for(int i=0; i<GROUP_SAMPLE_LENGTH; i++)
+    {
+      // get the channel and data
+      uint32_t ch = buffer[i] >> 12;    // channel is in the top 4 bits
+      uint32_t value = buffer[i] & 0x0FFFu;
+      // Serial.printf("%x %u %u\n", buffer[i], ch, value);
+
+      // update the corresponding filter for the channel
+      switch(ch) {
+        case 0:
+          // if the adc barfs 0s they end up here, so filter them out
+          if (value != 0) {
+            // aud_throttle.update(value);
+            rawThrottle += value;
+            nThrottle++;
+            // Serial.println(buffer[i]);
+          }
+          break;
+        case 3:
+          // aud_yaw.update(value);
+          rawYaw += value;
+          nYaw++;
+          break;
+        case 6:
+          // aud_pitch.update(value);
+          rawPitch += value;
+          nPitch++;
+          break;
+        case 7:
+          // aud_roll.update(value);
+          Serial.println(value);
+          rawRoll += value;
+          nRoll++;
+          break;
+        default:
+          Serial.printf("unknown channel %u\n", ch);
+          break;
+      }
+
+    }
+
+    // simple averaging
+    if (nRoll) rawRoll /= nRoll;
+    if (nPitch) rawPitch /= nPitch;
+    if (nThrottle) rawThrottle /= nThrottle;
+    if (nYaw) rawYaw /= nYaw;
+
+    // feed the raw values into the filters
+    aud_roll.update(rawRoll);
+    aud_pitch.update(rawPitch);
+    aud_throttle.update(rawThrottle);
+    aud_yaw.update(rawYaw);
+
+    // Serial.print(rawRoll);
+    // Serial.print(' ');
+    // Serial.print(rawPitch);
+    // Serial.print(' ');
+    // Serial.print(rawThrottle);
+    // Serial.print(' ');
+    // Serial.println(rawYaw);
+
+    // debug for oversampled and filtered
+    // Serial.print(rawRoll); Serial.print(' '); Serial.println(aud_roll.getCurrentAsInt());
+
+    // Serial.print(micros()); Serial.print(' '); Serial.print(aud_roll.getCurrentAsInt());
+
+    // Serial.printf("R %u P %u T %u Y %u\n", unscaled_roll, unscaled_pitch, unscaled_throttle, unscaled_yaw);
+    // Serial.print(rawYaw); Serial.print(' ');
+    // Serial.print(unscaled_yaw); Serial.print(' ');
+    // Serial.print(rawRoll); Serial.print(' ');
+    // Serial.println(unscaled_roll); 
+    // Serial.print(" ");
+    // Serial.print(unscaled_pitch); Serial.print(" ");
+    // Serial.print(unscaled_throttle); Serial.print(" ");
+    // Serial.println(unscaled_yaw);
+
+
+  }
+ 
+}
+
+#else // USE_DMA_ADC
+
+/**
+ * reading the gimbals
+ * 
+ * POC version, simplistic (and slow) reading strategy.
+*/
+void ICACHE_RAM_ATTR refreshGimbalData()
+{
+  const unsigned int OVERSAMPLE = (ExpressLRS_currAirRate_Modparams->interval / 200); // TODO #def
+
+  uint32_t ovs = 0;
+
+  // 1AUD filters
+  for(int i=0; i<OVERSAMPLE; i++) {
+    const int rawRoll = adc1_get_raw(ADC1_CHANNEL_7);
+    const int rawPitch = adc1_get_raw(ADC1_CHANNEL_6);
+    const int rawThrottle = adc1_get_raw(ADC1_CHANNEL_0);
+    const int rawYaw = adc1_get_raw(ADC1_CHANNEL_3);
+
+    ovs += rawRoll;
+
+    aud_roll.update(rawRoll);
+    aud_pitch.update(rawPitch);
+    aud_throttle.update(rawThrottle);
+    aud_yaw.update(rawYaw);
+
+    // audI_roll.update(rawRoll);
+    // audI_pitch.update(rawPitch);
+    // audI_throttle.update(rawThrottle);
+    // audI_yaw.update(rawYaw);
+
+    // debug for raw samples
+    // Serial.print(rawRoll); Serial.print(' ');
+    // Serial.print(rawPitch); Serial.print(' ');
+    // Serial.print(rawThrottle); Serial.print(' ');
+    // Serial.println(rawYaw);
+    
+  }
+
+  // debug ovs vs filter
+  // Serial.print(ovs/OVERSAMPLE); Serial.print(' '); 
+  // Serial.print(aud_roll.getCurrent()); Serial.print(' ');
+  // Serial.println(audI_roll.getCurrent());
+
+  // debug 4 filters
+  // Serial.print(aud_roll.getCurrentAsInt()); Serial.print(' ');
+  // Serial.print(aud_pitch.getCurrentAsInt()); Serial.print(' ');
+  // Serial.print(aud_throttle.getCurrentAsInt()); Serial.print(' ');
+  // Serial.println(aud_yaw.getCurrentAsInt());
+
+
+  #ifndef USE_IO_COPRO
   // switches
-  // TODO these should be properly debounced...
   int a1 = digitalRead(GPIO_AUX1);
   int a2 = digitalRead(GPIO_AUX2);
   int a3 = digitalRead(GPIO_AUX3);
@@ -363,35 +681,52 @@ void refreshGimbalData()
   crsf.currentSwitches[1] = a2*2;
   crsf.currentSwitches[2] = a3*2;
   crsf.currentSwitches[3] = a4*2;
+  #endif // USE_IO_COPRO
 
-  // debug
-  // static unsigned long lastDebug = 0;
-  // unsigned long now = millis();
-  // if (now > (lastDebug + 2000)) {
-  //   Serial.printf("aux %d %d\n", crsf.currentSwitches[0], crsf.currentSwitches[1]);
-    // Serial.print("roll "); Serial.print(raw_adc_roll);
-    // Serial.print(":"); Serial.print(adc_roll);
-    // Serial.print(" 1e: ");Serial.println(roll_1e);
-  //   Serial.print(" pitch "); Serial.print(raw_adc_pitch);
-  //   Serial.print(":"); Serial.print(adc_pitch);
-  //   Serial.print(" throttle "); Serial.print(raw_adc_throttle);
-  //   Serial.print(":"); Serial.print(adc_throttle);
-  //   Serial.print(" yaw "); Serial.print(raw_adc_yaw);
-  //   Serial.print(":"); Serial.print(adc_yaw);
+}
 
-  //   Serial.print(" samples/s "); Serial.println(nSamples*1000/(now-lastDebug));
+#endif // USE_DMA_ADC
 
-  //   Serial.print("ADC: "); Serial.print(minADC);
-  //   Serial.print(":"); Serial.print(maxADC);
-  //   Serial.print(":"); Serial.println(totalADC/nSamples);
 
-  //   Serial.printf("AUX: %d %d %d %d\n", a1, a2, a3, a4);
-    
-  //   lastDebug = now;
-  //   nSamples = 0;
-  //   totalADC = 0;
-  // }
-  
+/**
+ * Store the current configurable radio settings as defaults in the eeprom
+ */
+void saveSettingsAsDefaults()
+{
+  defaultSettings_t savedDefaults;
+  savedDefaults.airRateIndex = ExpressLRS_currAirRate_Modparams->index;
+  savedDefaults.prePApower = Radio.currPWR;
+  savedDefaults.tlmInterval = ExpressLRS_currAirRate_Modparams->TLMinterval;
+
+  savedDefaults.crc = CalcCRC((uint8_t*)&savedDefaults, sizeof(defaultSettings_t)-1);
+
+  hwTimer.stop();
+
+  EEPROM.put(0, savedDefaults);
+  EEPROM.commit();
+
+  hwTimer.resume();
+
+  Serial.println("current settings saved as defaults");
+}
+
+/** Send the current TX settings to the copro for display
+ * 
+ */
+void sendTxStateToCoPro()
+{
+  txModePkt_u pktU;
+  txModePkt_t *pkt = &pktU.txModePkt;
+
+  pkt->eyecatcher = PKT_EYECATCHER;
+  pkt->packetType = PKT_TXMODE;
+  pkt->payload.airRate = 1000000/ExpressLRS_currAirRate_Modparams->interval;
+  pkt->payload.power = Radio.getPowerMw();
+  pkt->payload.tlmInterval = TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval);
+
+  pkt->crc = CalcCRC(pktU.dataBytes, sizeof(txModePkt_t)-1);
+
+  Serial1.write(pktU.dataBytes, sizeof(txModePkt_t));
 }
 
 
@@ -430,6 +765,11 @@ void ICACHE_RAM_ATTR ProcessTLMpacket()
     Serial.println(type);
 #endif
     return;
+  }
+
+  // turn on the led if this is a state change
+  if (!isRXconnected) {
+    digitalWrite(GPIO_PIN_LED, 1);
   }
 
   isRXconnected = true;
@@ -482,21 +822,21 @@ void ICACHE_RAM_ATTR GenerateSyncPacketData()
   Radio.TXdataBuffer[6] = UID[5];
 }
 
-void ICACHE_RAM_ATTR Generate4ChannelData_10bit()
-{
-  uint8_t PacketHeaderAddr;
-  PacketHeaderAddr = (DeviceAddr << 2) + RC_DATA_PACKET;
-  Radio.TXdataBuffer[0] = PacketHeaderAddr;
-  Serial.println("TODO generate OTA packet for DAG");
-  Radio.TXdataBuffer[1] = ((CRSF_to_UINT10(crsf.ChannelDataIn[0]) & 0b1111111100) >> 2);
-  // Radio.TXdataBuffer[2] = ((CRSF_to_UINT10(crsf.ChannelDataIn[1]) & 0b1111111100) >> 2);
-  // Radio.TXdataBuffer[3] = ((CRSF_to_UINT10(crsf.ChannelDataIn[2]) & 0b1111111100) >> 2);
-  // Radio.TXdataBuffer[4] = ((CRSF_to_UINT10(crsf.ChannelDataIn[3]) & 0b1111111100) >> 2);
-  // Radio.TXdataBuffer[5] = ((CRSF_to_UINT10(crsf.ChannelDataIn[0]) & 0b0000000011) << 6) +
-  //                         ((CRSF_to_UINT10(crsf.ChannelDataIn[1]) & 0b0000000011) << 4) +
-  //                         ((CRSF_to_UINT10(crsf.ChannelDataIn[2]) & 0b0000000011) << 2) +
-  //                         ((CRSF_to_UINT10(crsf.ChannelDataIn[3]) & 0b0000000011) << 0);
-}
+// void ICACHE_RAM_ATTR Generate4ChannelData_10bit()
+// {
+//   uint8_t PacketHeaderAddr;
+//   PacketHeaderAddr = (DeviceAddr << 2) + RC_DATA_PACKET;
+//   Radio.TXdataBuffer[0] = PacketHeaderAddr;
+//   Serial.println("TODO generate OTA packet for DAG");
+//   Radio.TXdataBuffer[1] = ((CRSF_to_UINT10(crsf.ChannelDataIn[0]) & 0b1111111100) >> 2);
+//   // Radio.TXdataBuffer[2] = ((CRSF_to_UINT10(crsf.ChannelDataIn[1]) & 0b1111111100) >> 2);
+//   // Radio.TXdataBuffer[3] = ((CRSF_to_UINT10(crsf.ChannelDataIn[2]) & 0b1111111100) >> 2);
+//   // Radio.TXdataBuffer[4] = ((CRSF_to_UINT10(crsf.ChannelDataIn[3]) & 0b1111111100) >> 2);
+//   // Radio.TXdataBuffer[5] = ((CRSF_to_UINT10(crsf.ChannelDataIn[0]) & 0b0000000011) << 6) +
+//   //                         ((CRSF_to_UINT10(crsf.ChannelDataIn[1]) & 0b0000000011) << 4) +
+//   //                         ((CRSF_to_UINT10(crsf.ChannelDataIn[2]) & 0b0000000011) << 2) +
+//   //                         ((CRSF_to_UINT10(crsf.ChannelDataIn[3]) & 0b0000000011) << 0);
+// }
 
 // void ICACHE_RAM_ATTR Generate4ChannelData_11bit()
 // {
@@ -541,7 +881,7 @@ void ICACHE_RAM_ATTR GenerateMSPData()
   }
   else
   {
-    Serial.println("Unable to send MSP command. Packet too long.");
+    // Serial.println("Unable to send MSP command. Packet too long.");
   }
 }
 
@@ -564,29 +904,36 @@ void ICACHE_RAM_ATTR SetRFLinkRate(uint8_t index) // Set speed of RF link (hz)
 
   #ifdef PLATFORM_ESP32
   // updateLEDs(isRXconnected, ExpressLRS_currAirRate_Modparams->TLMinterval);
+  
+  #ifdef USE_1E
   // update the 1e filters
   double freq = 1000000.0 / ModParams->interval;
-  Serial.print("setting 1e freq to "); Serial.println(freq);
+  // Serial.print("setting 1e freq to "); Serial.println(freq);
   f_roll.setFrequency(freq);
+  f_pitch.setFrequency(freq);
+  f_yaw.setFrequency(freq);
+  f_throttle.setFrequency(freq);
+  #endif // USE_1E
+
   #endif
 }
 
 uint8_t ICACHE_RAM_ATTR decTLMrate()
 {
-  Serial.println("dec TLM");
+  // Serial.println("dec TLM");
   uint8_t currTLMinterval = (uint8_t)ExpressLRS_currAirRate_Modparams->TLMinterval;
 
   if (currTLMinterval < (uint8_t)TLM_RATIO_1_2)
   {
     ExpressLRS_currAirRate_Modparams->TLMinterval = (expresslrs_tlm_ratio_e)(currTLMinterval + 1);
-    Serial.println(currTLMinterval);
+    // Serial.println(currTLMinterval);
   }
   return (uint8_t)ExpressLRS_currAirRate_Modparams->TLMinterval;
 }
 
 uint8_t ICACHE_RAM_ATTR incTLMrate()
 {
-  Serial.println("inc TLM");
+  // Serial.println("inc TLM");
   uint8_t currTLMinterval = (uint8_t)ExpressLRS_currAirRate_Modparams->TLMinterval;
 
   if (currTLMinterval > (uint8_t)TLM_RATIO_NO_TLM)
@@ -598,14 +945,18 @@ uint8_t ICACHE_RAM_ATTR incTLMrate()
 
 void ICACHE_RAM_ATTR decRFLinkRate()
 {
-  Serial.println("dec RFrate");
-  SetRFLinkRate(ExpressLRS_currAirRate_Modparams->index + 1);
+  // Serial.println("dec RFrate");
+  if (ExpressLRS_currAirRate_Modparams->index < (RATE_MAX - 1)) {
+    SetRFLinkRate(ExpressLRS_currAirRate_Modparams->index + 1);
+  }
 }
 
 void ICACHE_RAM_ATTR incRFLinkRate()
 {
-  Serial.println("inc RFrate");
-  SetRFLinkRate(ExpressLRS_currAirRate_Modparams->index - 1);
+  // Serial.println("inc RFrate");
+  if (ExpressLRS_currAirRate_Modparams->index > 0) {
+    SetRFLinkRate(ExpressLRS_currAirRate_Modparams->index - 1);
+  }
 }
 
 void ICACHE_RAM_ATTR HandleFHSS()
@@ -623,10 +974,12 @@ void ICACHE_RAM_ATTR HandleTLM()
   if (ExpressLRS_currAirRate_Modparams->TLMinterval > 0)
   {
     uint8_t modresult = (NonceTX) % TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval);
-    if (modresult != 0) // wait for tlm response because it's time
+    if (modresult != 0)
     {
+      // not time yet, so return
       return;
     }
+    // wait for tlm response because it's time
     Radio.RXnb();
     WaitRXresponse = true;
   }
@@ -687,6 +1040,21 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
     }
     else
     {
+      // copy the current stick positions into the crsf data structure
+      crsf.ChannelDataIn[0] = scaleRollData(aud_roll.getCurrentAsInt());
+      crsf.ChannelDataIn[1] = scalePitchData(aud_pitch.getCurrentAsInt());
+      crsf.ChannelDataIn[2] = scaleThrottleData(aud_throttle.getCurrentAsInt());
+      crsf.ChannelDataIn[3] = scaleYawData(aud_yaw.getCurrentAsInt());
+
+      // crsf.ChannelDataIn[0] = scaleRollData(audI_roll.getCurrent());
+      // crsf.ChannelDataIn[1] = scalePitchData(audI_pitch.getCurrent());
+      // crsf.ChannelDataIn[2] = scaleThrottleData(audI_throttle.getCurrent());
+      // crsf.ChannelDataIn[3] = scaleYawData(audI_yaw.getCurrent());
+
+      // debug
+      // Serial.print("0 ");
+      // Serial.println(crsf.ChannelDataIn[0]);
+
 #if defined HYBRID_SWITCHES_8
       GenerateChannelDataHybridSwitch8(Radio.TXdataBuffer, &crsf, DeviceAddr);
 #elif defined SEQ_SWITCHES
@@ -701,6 +1069,7 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
   uint8_t crc = CalcCRC(Radio.TXdataBuffer, 7) + CRCCaesarCipher;
   Radio.TXdataBuffer[7] = crc;
   Radio.TXnb(Radio.TXdataBuffer, 8);
+
 
 
   if (ChangeAirRateRequested)
@@ -800,6 +1169,8 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
 
 void ICACHE_RAM_ATTR RXdoneISR()
 {
+  // Ideally this should just copy the data from the radio buffer and then
+  // notify a telem task to do the processing.
   ProcessTLMpacket();
 }
 
@@ -808,7 +1179,6 @@ void ICACHE_RAM_ATTR TXdoneISR()
   NonceTX++; // must be done before callback
   HandleFHSS();
   HandleTLM();
-  RadioIsIdle = true;
 
   // is there a pending rate change?
   if (nextRFLinkRate >= 0) {
@@ -816,18 +1186,27 @@ void ICACHE_RAM_ATTR TXdoneISR()
     isRXconnected = false;
     LastTLMpacketRecvMillis = 0; // kick the tx into reconnecting straight away
     nextRFLinkRate = -1; // so that the button can be used again
+    #ifdef USE_TFT
     lcdNeedsRedraw = true; // trigger a screen update to show the new rate
+    #endif
+    sendStateNeeded = true; // update will be done from loop
   }
 
   // is there a pending power change?
   if (nextRadioPower != NONE_PENDING) {
     Radio.SetOutputPower(nextRadioPower);
-    Serial.print("power set to ");Serial.println(nextRadioPower);
+    // Serial.print("power set to ");Serial.println(nextRadioPower);
     nextRadioPower = NONE_PENDING; // so that the button can be used again
+    #ifdef USE_TFT
     lcdNeedsRedraw = true; // trigger a screen update to show the new rate
+    #endif
+    sendStateNeeded = true; // update will be done from loop
   }
+
+  RadioIsIdle = true;
 }
 
+#ifdef USE_TFT
 void redrawDisplay()
 {
   tft.fillScreen(TFT_BLUE);
@@ -842,7 +1221,7 @@ void redrawDisplay()
 
   float pmw = pow10(((float)Radio.currPWR)/10.0f);
 
-  Serial.print(Radio.currPWR); Serial.print(" "); Serial.println(pmw);
+  // Serial.print(Radio.currPWR); Serial.print(" "); Serial.println(pmw);
 
   tft.setCursor(0, 35, 2);
   tft.print("P ");
@@ -859,7 +1238,6 @@ void redrawDisplay()
   
   // TODO add display for telem interval
 
-  // TODO add battery voltage
 }
 
 /** Check that the throttle is low and switches are off
@@ -887,6 +1265,7 @@ void startupSafetyCheck()
     }
 
     if (!throttleSafe || anySwitchSet) {
+      #ifdef USE_TFT
       tft.fillScreen(TFT_RED);
       tft.setTextDatum(TC_DATUM);
       tft.setTextColor(TFT_WHITE);
@@ -899,6 +1278,7 @@ void startupSafetyCheck()
       if (!throttleSafe){
         tft.drawString("THROTTLE!", TFT_WIDTH/2, 100);
       }
+      #endif // USE_TFT
 
       // give the user time to do something about it
       delay(100);
@@ -909,14 +1289,263 @@ void startupSafetyCheck()
   // tft.fillScreen(TFT_BLUE);
 }
 
+#endif // USE_TFT
+
+/**
+ * Called from loop() when there is data available on the serial port
+ */
+void readFromCoPro(bool eyeCatcherAlreadySeen = false)
+{
+  // read bytes from serial port until it is empty, building up commands and executing them
+  while(Serial1.available()) {
+    int c = 0;
+    if (!eyeCatcherAlreadySeen) {
+      c = Serial1.read();
+    } else {
+      // make sure we only skip the read the first time around the loop
+      eyeCatcherAlreadySeen = false;
+      c = PKT_EYECATCHER;
+    }
+    if (c == PKT_EYECATCHER) {
+      
+      // read the command
+      c = Serial1.read();
+      switch(c) {
+        default:
+          Serial.printf("unsupported command %02x\n", c);
+          break;
+        case -1: // nothing was available
+          Serial.println("readFromCoPro incomplete packet");
+          return; // give up on this packet
+          break;
+        case PKT_SAVE_CONFIG:
+          // ignore if the radio is armed
+          if (crsf.currentSwitches[0] != 0) {
+            Serial.println("ignoring save, armed");
+          } else {
+            // defer the change to loop()
+            saveNeeded = true;
+          }
+          break;
+        case PKT_SWITCH_STATE:
+        {
+          switchState_u switches;
+          switches.dataBytes[0] = PKT_EYECATCHER; // seems daft, but we need it for the crc
+          switches.dataBytes[1] = c; // also needed for crc
+          // get the switch data byte
+          c = Serial1.read();
+          if (c == -1) {
+            // ran out of data - maybe worth trying harder?
+            Serial.println("no switch data");
+            return;
+          } else {
+            switches.dataBytes[2] = c;
+          }
+          // get the crc
+          uint8_t pktCRC = Serial1.read();
+          if (pktCRC == -1) {
+            // ran out of data - maybe worth trying harder?
+            Serial.println("no crc on switch packet");
+            return;
+          }
+          // calculate the expected crc and compare with the sent one
+          uint8_t expectedCRC = CalcCRC(switches.dataBytes, sizeof(switches)-1);
+          if (pktCRC != expectedCRC) {
+            Serial.printf("crc mismatch, expected %02X, actual %02X\n", expectedCRC, switches.switchState.crc);
+            return;
+          }
+          // we have switches - put the data somewhere useful!
+          // Serial.printf("Yay switches: %d %d %d %d\n", switches.switchState.aux1, switches.switchState.aux2, switches.switchState.aux3, switches.switchState.aux4);
+
+          // digitalWrite(GPIO_PIN_LED, switches.switchState.aux1?1:0); // for Testing
+
+          crsf.currentSwitches[0] = switches.switchState.aux1;
+          crsf.currentSwitches[1] = switches.switchState.aux2;
+          crsf.currentSwitches[2] = switches.switchState.aux3;
+          crsf.currentSwitches[3] = switches.switchState.aux4;
+
+          break;
+        }
+        case PKT_PARAM_CHANGE:
+        {
+          paramChangePkt_u pktU;
+          pktU.paramChangePkt.eyecatcher = PKT_EYECATCHER;
+          pktU.paramChangePkt.packetType = PKT_PARAM_CHANGE;
+          // get the data byte
+          c = Serial1.read();
+          if (c == -1) {
+            // ran out of data - maybe worth trying harder?
+            Serial.println("no body");
+            return;
+          } else {
+            pktU.dataBytes[2] = c;
+          }
+          // get the crc
+          uint8_t pktCRC = Serial1.read();
+          if (pktCRC == -1) {
+            // ran out of data - maybe worth trying harder?
+            Serial.println("no crc on param packet");
+            return;
+          }
+          // calculate the expected crc and compare with the sent one
+          uint8_t expectedCRC = CalcCRC(pktU.dataBytes, sizeof(paramChangePkt_u)-1);
+          if (pktCRC != expectedCRC) {
+            Serial.printf("crc mismatch, expected %02X, actual %02X\n", expectedCRC, pktCRC);
+            return;
+          }
+          // ignore param changes in the radio is armed
+          if (crsf.currentSwitches[0] != 0) {
+            Serial.println("ignoring param change, armed");
+            break;
+          }
+          paramChange_t *pC = &pktU.paramChangePkt.payload;
+          uint param = pC->param;
+          uint dir = pC->direction;
+          switch (param) {
+            case PARAM_POWER:
+            {
+              int newPower = Radio.currPWR;
+              if (dir == PARAM_INC) {
+                newPower++;
+              } else {
+                newPower--;
+              }
+              nextRadioPower = newPower;
+              // Radio.SetOutputPower(newPower);
+              // sendTxStateToCoPro();
+              break;
+            }
+            case PARAM_RATE:
+            {
+              // defer the changes to the txDoneISR
+              if (dir == PARAM_INC) {
+                if (ExpressLRS_currAirRate_Modparams->index > 0) {
+                  nextRFLinkRate = ExpressLRS_currAirRate_Modparams->index - 1;
+                }
+              } else {
+                if (ExpressLRS_currAirRate_Modparams->index < (RATE_MAX - 1)) {
+                  nextRFLinkRate = ExpressLRS_currAirRate_Modparams->index + 1;
+                }
+              }
+              break;
+            }
+            case PARAM_TLM_INT:
+            {
+              if (dir == PARAM_INC) {
+                incTLMrate();
+              } else {
+                decTLMrate();
+              }
+              sendTxStateToCoPro(); // get the new data on the display
+              break;
+            }
+
+            default:
+              Serial.printf("unimpl param %d\n", param);
+          }
+          break;
+        }
+      }
+    } // if eyecatcher
+  } // while data available
+}
+
+#ifndef USE_DMA_ADC
+
+/** task for reading the ADCs and filtering the gimbal data
+ * Will be triggered from the timer callback
+ */
+void readADCsTask(void *pvParameters)
+{
+  for(;;) {
+    ulTaskNotifyTake( pdTRUE, portMAX_DELAY );
+    unsigned long start = micros();
+    refreshGimbalData();
+    tADC = micros() - start;
+
+    cpuLoad = LPF_cpuLoad.update((tRF + tADC) * 100 / ExpressLRS_currAirRate_Modparams->interval);
+  }
+}
+
+#endif // not USE_DMA_ADC
+
+/** task for reading from the UI co-processor
+ * 
+ * Depends on the following addition to HardwareSerial.cpp:
+ *
+ * Wait for up to timeout ms for a byte of data
+ * NB if timed out, returns 0 which is indistinguishable from a valid byte
+  int HardwareSerial::blockingRead(uint32_t timeout)
+  {
+      return uartBlockingRead(_uart, timeout);
+  }
+ * */
+void readFromCoProTask(void *pvParameters)
+{
+  #define RD_BUF_SIZE 100
+  // uart_event_t event;
+  // uint8_t* dtmp = (uint8_t*) malloc(RD_BUF_SIZE);
+  for(;;) {
+    // Serial.println("top of uart reading task loop");
+    // uart_write_bytes(UART_NUM_0, "top loop\n", 9);
+
+    // NB if timeout, will return 0 which is indistinguishable from a valid byte.
+    // Fortunately we can dump bytes until we find the (non-zero) eye catcher anyway.
+    // NB THIS NEEDS A HACKED VERSION OF THE SERIAL LIBRARY
+    int c = Serial1.blockingRead(5000);
+
+    // Serial.printf("blockingRead returned %x\n", c);
+    if (c == PKT_EYECATCHER) {
+      const bool alreadyGotEyecatcher = true;
+      readFromCoPro(alreadyGotEyecatcher);
+    }
+
+    // int bytesRead = uart_read_bytes(UART_NUM_1, dtmp, RD_BUF_SIZE, 5000);
+    // stuff
+    // Serial.printf("read %d bytes\n", bytesRead);
+    // char pbuf[80];
+    // sprintf(pbuf, "got %d bytes\n", bytesRead);
+    // uart_write_bytes(UART_NUM_0, pbuf, strlen(pbuf));
+
+
+    //Waiting for UART event.
+    // if(xQueueReceive(copro_uart_queue, (void * )&event, (portTickType)portMAX_DELAY)) 
+    // {
+    //   bzero(dtmp, RD_BUF_SIZE);
+    //   switch(event.type) {
+    //     //Event of UART receving data
+    //     /*We'd better handler data event fast, there would be much more data events than
+    //     other types of events. If we take too much time on data event, the queue might
+    //     be full.*/
+    //     case UART_DATA:
+    //       uart_read_bytes(UART_NUM_2, dtmp, event.size, portMAX_DELAY);
+    //       // stuff
+    //       Serial.printf("read %d bytes\n", event.size);
+    //       break;
+    //     default:
+    //       Serial.printf("unhandled event %d\n", event.type);
+    //       break;
+    //   }
+    // }
+  }
+
+}
+
+
 void setup()
 {
 #ifdef PLATFORM_ESP32
   // Serial.begin(115200);
-  Serial.begin(460800);
+  // Serial.begin(460800);
+  Serial.begin(921600);
   #ifdef USE_UART2
-    Serial2.begin(400000);
+    #error uart2 is being used by the copro
+    // Serial2.begin(400000);
   #endif
+
+  pinMode(GPIO_PIN_LED, OUTPUT);
+  digitalWrite(GPIO_PIN_LED, 1);
+
 #endif
 
 #if defined(TARGET_R9M_TX) || defined(TARGET_R9M_LITE_TX)
@@ -961,7 +1590,7 @@ void setup()
   //WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector needed for debug, shouldn't need to be actually used in practise.
   // strip.Begin();
   // Get base mac address
-  esp_read_mac(baseMac, ESP_MAC_WIFI_STA);
+  // esp_read_mac(baseMac, ESP_MAC_WIFI_STA);
   // Print base mac address
   // This should be copied to common.h and is used to generate a unique hop sequence, DeviceAddr, and CRC.
   // UID[0..2] are OUI (organisationally unique identifier) and are not ESP32 unique.  Do not use!
@@ -983,8 +1612,49 @@ void setup()
   // Serial.println("");
 
   // init the display
+  #ifdef USE_TFT
   tft.init();
   tft.setRotation(2);
+  #endif
+
+  #ifdef USE_IO_COPRO
+  // setup serial port
+  Serial1.begin(460800, SERIAL_8N1, GPIO_PIN_COPRO_RX, GPIO_PIN_COPRO_TX);
+  // uart_config_t uart_config = {
+  //   .baud_rate = 460800,
+  //   .data_bits = UART_DATA_8_BITS,
+  //   .parity = UART_PARITY_DISABLE,
+  //   .stop_bits = UART_STOP_BITS_1,
+  //   .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+  //   .rx_flow_ctrl_thresh = 00, // hopefully doesn't matter
+  //   .use_ref_tick = false, 
+  // };
+  //Install UART driver, and get the queue.
+  // int res = uart_driver_install(UART_NUM_1, 1024, 1024, 0, NULL, 0);
+  // Serial.printf("driver_install: %d\n", res);
+  // res = uart_param_config(UART_NUM_1, &uart_config);
+  // Serial.printf("param_config: %d\n", res);
+
+  // Set UART log level
+  // esp_log_level_set(TAG, ESP_LOG_INFO);
+  // Set UART pins (using UART0 default pins ie no changes.)
+  // is this needed?
+  // uart_set_pin(UART_NUM_1, UART_PIN_NO_CHANGE, 23, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+
+  // Set uart pattern detect function.
+  // uart_enable_pattern_det_baud_intr(EX_UART_NUM, '+', PATTERN_CHR_NUM, 9, 0, 0);
+  // Reset the pattern queue length to record at most 20 pattern positions.
+  // uart_pattern_queue_reset(EX_UART_NUM, 20);
+
+  // uart_driver_install(UART_NUM_0, 1024, 1024, 0, NULL, 0);
+  // uart_param_config(UART_NUM_0, &uart_config);
+
+  // uart_write_bytes(UART_NUM_0, "no 5 is alive!\n", 15);
+
+  // // start a task to listen for updates from the co-pro
+  xTaskCreatePinnedToCore(readFromCoProTask, "readCoProTask", 3000, NULL, 10, &readCoProTask, 1);
+
+  #else // USE_IO_COPRO
 
   // switches
   pinMode(GPIO_AUX1, INPUT_PULLUP);
@@ -995,6 +1665,8 @@ void setup()
   // ttgo buttons
   pinMode(GPIO_BUTTON1, INPUT);
   pinMode(GPIO_BUTTON2, INPUT);
+
+  #endif // USE_IO_COPRO
 
 #endif
 
@@ -1021,67 +1693,156 @@ void setup()
   // crsf.RecvParameterUpdate = &ParamUpdateReq;
   hwTimer.callbackTock = &TimerCallbackISR;
 
-  Serial.println("ExpressLRS TX Module Booted...");
+  // Serial.println("ExpressLRS TX Module Booted...");
 
-  // setup the ADC channels:
-  initADC();
 
   POWERMGNT.init();
   Radio.currFreq = GetInitialFreq(); //set frequency first or an error will occur!!!
+
+  delay(100); // small delay to give the copro and radio moduletime to startup
+
+  bool result = EEPROM.begin(64);
+  Serial.print("begin returned "); Serial.println(result);
+
+  // TODO read & validate the default settings
+  defaultSettings_t savedDefaults;
+  EEPROM.get(0, savedDefaults);
+
+  Serial.printf("defaults: %u %d %u (crc: %u)\n", savedDefaults.airRateIndex, savedDefaults.prePApower, savedDefaults.tlmInterval, savedDefaults.crc);
+
+  uint8_t linkRateIndex = RATE_DEFAULT;
+  int16_t tlmInterval = -1;
+
+  uint8_t expectedCRC = CalcCRC((uint8_t *)&savedDefaults, sizeof(defaultSettings_t)-1); // don't include the crc in the new crc calc
+  if (expectedCRC == savedDefaults.crc) {
+    Serial.println("saved defaults are good");
+    // apply the defaults to the radio settings
+    radioPower = savedDefaults.prePApower;
+    linkRateIndex = savedDefaults.airRateIndex;
+    tlmInterval = savedDefaults.tlmInterval;
+  } else {
+    Serial.println("saved defaults bad crc");
+  }
+
+
   Radio.Begin();
   //Radio.SetSyncWord(UID[3]);
   // POWERMGNT.setDefaultPower();
   Radio.SetOutputPower(radioPower);
 
-  SetRFLinkRate(RATE_DEFAULT);
+  SetRFLinkRate(linkRateIndex);
+  
+  if (tlmInterval != -1) {
+    ExpressLRS_currAirRate_Modparams->TLMinterval = (expresslrs_tlm_ratio_e)tlmInterval;
+  }
+
+  // TODO config
   // crsf.Begin();
 
-  startupSafetyCheck();
+  // TODO rethink for co-pro
+  // startupSafetyCheck();
 
-  // redrawDisplay();
+  // setup the ADC channels:
+  initADC();
+
+  // start a task to read the gimbals
+  #ifdef USE_DMA_ADC
+  xTaskCreatePinnedToCore(readGimbalsViaDMA_task, "DMA_ADCsTask", 3000, NULL, 20, &readGimbalsDMATaskHandle, 1);
+  #else
+  xTaskCreatePinnedToCore(readADCsTask, "readADCsTask", 3000, NULL, 20, &readADCsTaskHandle, 1);
+  #endif
 
   hwTimer.init();
-  // hwTimer.stop(); //comment to automatically start the RX timer and leave it running
+  // hwTimer.stop(); //comment to automatically start the timer and leave it running
 
+  sendTxStateToCoPro();
+
+  // Serial.println("setup finished\n");
 }
 
 void loop()
 {
-  static uint32_t lastDebugOutput = 0;
-  static int button1state = 1;
-  static int button2state = 1;
+  // static uint32_t lastDebugOutput = 0;
+  static uint32_t lastTelemSend = 0;
 
-  static unsigned long b1LastChange = 0;
-  static unsigned long b2LastChange = 0;
+  // TODO add a timeout so we can cancel the save if something goes wrong
+  if (saveNeeded && RadioIsIdle) {
+    saveSettingsAsDefaults();
+    saveNeeded = false;
+  }
+
+  if (sendStateNeeded) {
+    sendTxStateToCoPro();
+    sendStateNeeded = false;
+  }
+
+  unsigned long now = millis();
+
+  // if (now > (lastDebugOutput + 1000)) {
+  //   Serial.print("cpu ");
+  //   Serial.println(cpuLoad);
+  //   Serial.printf("R %u P %u T %u Y %u\n", crsf.ChannelDataIn[0], crsf.ChannelDataIn[1], crsf.ChannelDataIn[2], crsf.ChannelDataIn[3]);
+  //   // Serial.printf("nGroups %u, sps %lu\n", nADCgroups, nADCgroups * GROUP_SAMPLE_LENGTH * 1000 / (now-lastDebugOutput));
+  //   // nADCgroups = 0;
+  //   lastDebugOutput = now;
+  // }
+
+  // TODO this is for testing, we'll probably send telem to copro everytime we get it from the rx
+  if (now > (lastTelemSend + 500)) {
+    lastTelemSend = now;
+    // Serial.println("sending test telem");
+    // send a packet to the copro for testing
+    rxTelemPkt_u pktU;
+    rxTelemPkt_t *pkt = &pktU.rxTelemPkt;
+
+    pkt->eyecatcher = PKT_EYECATCHER;
+    pkt->packetType = PKT_TELEM;
+    pkt->payload.rssi_dBm = crsf.LinkStatistics.uplink_RSSI_1;
+    pkt->payload.snr = crsf.LinkStatistics.uplink_SNR;
+    pkt->payload.lq = crsf.LinkStatistics.uplink_Link_quality;
+    pkt->payload.cpu = cpuLoad;
+
+    pkt->crc = CalcCRC(pktU.dataBytes, sizeof(rxTelemPkt_t)-1);
+
+    Serial1.write(pktU.dataBytes, sizeof(rxTelemPkt_t));
+
+  }
+
+
+  // static int button1state = 1;
+  // static int button2state = 1;
+
+  // static unsigned long b1LastChange = 0;
+  // static unsigned long b2LastChange = 0;
 
   // buttons read 0 when pressed
-  // button 1 for packet rate
-  int b1 = digitalRead(GPIO_BUTTON1);
-  if (b1 != button1state && millis() > (b1LastChange + 100)) {
-    // record the new state
-    button1state = b1;
-    b1LastChange = millis();
-    if (b1 == 0 && nextRFLinkRate < 0) {
-      // don't do the change here or the conflict with the radio can crash the tx
-      // set the variable which will trigger the change at the next opportunity
-      nextRFLinkRate = (ExpressLRS_currAirRate_Modparams->index + 1) % RATE_MAX;
-    }
-  }
+  // // button 1 for packet rate
+  // int b1 = digitalRead(GPIO_BUTTON1);
+  // if (b1 != button1state && millis() > (b1LastChange + 100)) {
+  //   // record the new state
+  //   button1state = b1;
+  //   b1LastChange = millis();
+  //   if (b1 == 0 && nextRFLinkRate < 0) {
+  //     // don't do the change here or the conflict with the radio can crash the tx
+  //     // set the variable which will trigger the change at the next opportunity
+  //     nextRFLinkRate = (ExpressLRS_currAirRate_Modparams->index + 1) % RATE_MAX;
+  //   }
+  // }
 
-  // button 2 for power
-  int b2 = digitalRead(GPIO_BUTTON2);
-  if (b2 != button2state && millis() > (b2LastChange + 100)) {
-    // record the new state
-    button2state = b2;
-    b2LastChange = millis();
-    if (b2 == 0) {
-      nextRadioPower = radioPower + 1;
-      if (nextRadioPower > MAX_PRE_PA_POWER) {
-        nextRadioPower = MIN_PRE_PA_POWER;
-      }
-      radioPower = nextRadioPower;
-    }
-  }
+  // // button 2 for power
+  // int b2 = digitalRead(GPIO_BUTTON2);
+  // if (b2 != button2state && millis() > (b2LastChange + 100)) {
+  //   // record the new state
+  //   button2state = b2;
+  //   b2LastChange = millis();
+  //   if (b2 == 0) {
+  //     nextRadioPower = radioPower + 1;
+  //     if (nextRadioPower > MAX_PRE_PA_POWER) {
+  //       nextRadioPower = MIN_PRE_PA_POWER;
+  //     }
+  //     radioPower = nextRadioPower;
+  //   }
+  // }
 
 
   // while(UpdateParamReq){
@@ -1092,11 +1853,10 @@ void loop()
   // Serial.println(crsf.OpenTXsyncOffset);
 #endif
 
+  #ifdef USE_TFT
   if (millis() > (lastDebugOutput + 500)) {  // TODO not really debug anymore, change name
     lastDebugOutput = millis();
 
-    // LastTLMpacketRecvMillis gets set to 0 after a rate change, and we need a full redraw to show the new rate
-    // TODO add a global flag for requesting an LCD update
     if (lcdNeedsRedraw) {
       redrawDisplay();
       lcdNeedsRedraw = false;
@@ -1189,10 +1949,14 @@ void loop()
     // tft.printf("A1 %d A2 %d B1 %d B2 %d", a1, a2, b1, b2);
 
   }
+  #endif // USE_TFT
 
 
-  if (millis() > (RX_CONNECTION_LOST_TIMEOUT + LastTLMpacketRecvMillis))
+  if (now > (RX_CONNECTION_LOST_TIMEOUT + LastTLMpacketRecvMillis))
   {
+    if (isRXconnected) {
+      digitalWrite(GPIO_PIN_LED, 0);
+    }
     isRXconnected = false;
     #if defined(TARGET_R9M_TX) || defined(TARGET_R9M_LITE_TX)
     digitalWrite(GPIO_PIN_LED_RED, LOW);
@@ -1200,6 +1964,9 @@ void loop()
   }
   else
   {
+    if (!isRXconnected) {
+      digitalWrite(GPIO_PIN_LED, 1);
+    }
     isRXconnected = true;
     #if defined(TARGET_R9M_TX) || defined(TARGET_R9M_LITE_TX)
     digitalWrite(GPIO_PIN_LED_RED, HIGH);
@@ -1246,51 +2013,63 @@ void loop()
 //     }
 //   }
 
-delay(50); // stop this method from eating all available cpu
+  delay(10); // stop this method from eating all available cpu
 }
 
 void ICACHE_RAM_ATTR TimerCallbackISR()
 {
-  static unsigned long lastDebug = 0;
+  // static unsigned long lastDebug = 0;
   unsigned long start = micros();
 
-  if (!UpdateRFparamReq)
+  if (!UpdateRFparamReq && !saveNeeded)
   {
     RadioIsIdle = false;
-    SendRCdataToRF();
+    SendRCdataToRF(); // comment out for testing without radio
   }
   else
   {
     NonceTX++;
   }
 
-  unsigned long adc_start = micros();
-  refreshGimbalData();
-  unsigned long adc_end = micros();
+  tRF = micros() - start;
 
-  unsigned long tRF = adc_start - start;
-  unsigned long tADC = adc_end - adc_start;
+  // unsigned long adc_start = micros();
+  // refreshGimbalData();
+  // unsigned long adc_end = micros();
 
-  totalADC += tADC;
-  if (tADC > maxADC) {
-    maxADC = tADC;
-  } else if (tADC < minADC) {
-    minADC = tADC;
-  }
+  // unsigned long tRF = adc_start - start;
+  // unsigned long tADC = adc_end - adc_start;
+
+  // totalADC += tADC;
+  // if (tADC > maxADC) {
+  //   maxADC = tADC;
+  // } else if (tADC < minADC) {
+  //   minADC = tADC;
+  // }
 
   // not really cpu load, more like timing window ustilisation
-  cpuLoad =  LPF_cpuLoad.update((tADC+tRF)*100/ExpressLRS_currAirRate_Modparams->interval);
+  // cpuLoad =  LPF_cpuLoad.update((tADC+tRF)*100/ExpressLRS_currAirRate_Modparams->interval);
 
-  unsigned long now = adc_end/1000;
-  if (now > (lastDebug + 5000)) {
-    lastDebug = now;
-    Serial.print("tRF ");    Serial.print(tRF);
-    Serial.print(", tADC "); Serial.print(tADC);
-    Serial.print(", total ");Serial.print(tADC+tRF);
-    Serial.print(" cpu ");   Serial.println(cpuLoad);
-  }
+  // unsigned long now = adc_end/1000;
+  // if (now > (lastDebug + 5000)) {
+  //   lastDebug = now;
+  //   Serial.print("tRF ");    Serial.print(tRF);
+  //   Serial.print(", tADC "); Serial.print(tADC);
+  //   Serial.print(", total ");Serial.print(tADC+tRF);
+  //   Serial.print(" cpu ");   Serial.println(cpuLoad);
+  // }
 
+  #ifndef USE_DMA_ADC
+  // notify the ADC task to read the gimbal data
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+  vTaskNotifyGiveFromISR(readADCsTaskHandle, &xHigherPriorityTaskWoken );
+
+  // tLeaveISR = micros();
+  portYIELD_FROM_ISR();
+  #endif // USE_DMA_ADC
 }
+
 
 void OnRFModePacket(mspPacket_t *packet)
 {

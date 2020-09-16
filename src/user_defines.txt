@@ -53,7 +53,11 @@
 #-DMY_UID=180,230,45,234,66,4
 -DMY_UID=0x17,0x13,0x31,0x19,0x23,0xEB
 
+#-DUSE_HARDWARE_CRC
+
 ### OTHER OPTIONS: ### 
+
+-DUSE_WEBSERVER
 
 -DAuto_WiFi_On_Boot   # Wifi starts if no connection is found between 10 and 11 seconds after boot (for ESP8285 Modules)
 

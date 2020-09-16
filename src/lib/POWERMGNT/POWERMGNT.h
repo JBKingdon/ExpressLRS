@@ -15,6 +15,13 @@
 #define DefaultPowerEnum 2
 #endif
 
+#ifdef TARGET_TX_DAG_V1
+// not actually used yet, but need something to keep the compiler happy
+#define MaxPower 1
+#define DefaultPowerEnum 1
+#endif
+
+
 #ifdef TARGET_100mW_MODULE
 #define MaxPower 2
 #define DefaultPowerEnum 2

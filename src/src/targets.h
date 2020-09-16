@@ -210,6 +210,7 @@ https://github.com/jaxxzer
 #define GPIO_PIN_LED 16
 #define GPIO_PIN_BUTTON 0
 #define timerOffset -1
+#define MAX_PRE_PA_POWER     13
 #endif
 
 #ifdef TARGET_TX_ESP32_SX1280_V1
@@ -242,27 +243,134 @@ https://github.com/jaxxzer
 #define GPIO_PIN_RCSIGNAL_TX 13
 #endif
 
-#ifdef TARGET_TX_PICO_E28_SX1280_V1
-#define GPIO_PIN_NSS         10
-#define GPIO_PIN_BUSY        38
+// For the 2nd DAG handset prototype
+
+#ifdef TARGET_TX_DAG_V1
+#define GPIO_PIN_NSS         21
+#define GPIO_PIN_BUSY        14
 #define GPIO_PIN_DIO0        -1
-#define GPIO_PIN_DIO1        37
-#define GPIO_PIN_MOSI        18
-#define GPIO_PIN_MISO        23
-#define GPIO_PIN_SCK          5
-#define GPIO_PIN_RST         32
-#define GPIO_PIN_RX_ENABLE    9
-#define GPIO_PIN_TX_ENABLE   33
-// #define GPIO_PIN_TX_ENABLE   25     // unconnected, harmless
-// #define GPIO_PIN_OLED_SDA 21
-// #define GPIO_PIN_OLED_SCK 22
-#define GPIO_PIN_RCSIGNAL_RX 15
-#define GPIO_PIN_RCSIGNAL_TX 15
-#define GPIO_PIN_BLUE_LED     2 // led1
-#define GPIO_PIN_GREEN_LED   13 // led2
+#define GPIO_PIN_DIO1        27
+#define GPIO_PIN_MOSI        23
+#define GPIO_PIN_MISO        19
+#define GPIO_PIN_SCK         18
+#define GPIO_PIN_RST         12
+#define GPIO_PIN_RX_ENABLE   22
+#define GPIO_PIN_TX_ENABLE   13
+// #define GPIO_PIN_RX_ENABLE   -1     // e28-12 doesn't have enables
+// #define GPIO_PIN_TX_ENABLE   -1
+#define GPIO_PIN_RCSIGNAL_RX -1 // keep the crsf lib happy
+#define GPIO_PIN_RCSIGNAL_TX -1
+#define GPIO_PIN_LED         2
 
-#define GPIO_PIN_LED         GPIO_PIN_BLUE_LED  // convenince for compatability
+#define GPIO_PIN_COPRO_RX   16
+#define GPIO_PIN_COPRO_TX   17
 
-#define GPIO_PIN_DEBUG       21
+#define GPIO_PIN_DEBUG       -1
 #define GPIO_PIN_BUTTON       0
+
+#define ADC_ROLL             36 // Warning - these are currently ignored
+#define ADC_PITCH            39 // and values are hard coded in initADC()
+#define ADC_THROTTLE         34 // .
+#define ADC_YAW              35 // .
+
+// For the non-amplified E28-12
+// #define MAX_PRE_PA_POWER     13
+// #define MIN_PRE_PA_POWER    -18
+
+// For the non-amplified E28-20
+#define MAX_PRE_PA_POWER     -2
+#define MIN_PRE_PA_POWER    -18
+
+#endif // TARGET_TX_DAG_V1
+
+#ifdef TARGET_TX_DAG_V1_COPRO
+
+// keep CRSF.cpp happy
+#define GPIO_PIN_RCSIGNAL_RX -1
+#define GPIO_PIN_RCSIGNAL_TX -1
+
 #endif
+
+// first dag prototype
+
+// #ifdef TARGET_TX_DAG_V1
+// #define GPIO_PIN_NSS         32 
+// #define GPIO_PIN_BUSY        22
+// #define GPIO_PIN_DIO0        -1
+// #define GPIO_PIN_DIO1        17
+// #define GPIO_PIN_MOSI        25
+// #define GPIO_PIN_MISO        26
+// #define GPIO_PIN_SCK         33
+// #define GPIO_PIN_RST         21
+// // #define GPIO_PIN_RX_ENABLE   -1     // e28-12 doesn't have enables
+// // #define GPIO_PIN_TX_ENABLE   -1
+// // #define GPIO_PIN_OLED_SDA 21
+// // #define GPIO_PIN_OLED_SCK 22
+// #define GPIO_PIN_RCSIGNAL_RX -1
+// #define GPIO_PIN_RCSIGNAL_TX -1
+// #define GPIO_PIN_LED         2
+
+// #define GPIO_PIN_DEBUG       -1
+// #define GPIO_PIN_BUTTON       0
+
+// #define ADC_ROLL             39 // Warning - these are currently ignored
+// #define ADC_PITCH            38 // and values are hard coded in initADC()
+// #define ADC_THROTTLE         37 // .
+// #define ADC_YAW              36 // .
+
+// // moved to copro
+// // #define ADC_BATTERY          13
+
+// // #define GPIO_AUX1            27  // switches moved to copro
+// // #define GPIO_AUX2             2
+// // #define GPIO_AUX3            12
+// // #define GPIO_AUX4            15
+
+// // #define GPIO_BUTTON1         35  // buttons were ttgo specific
+// // #define GPIO_BUTTON2         0
+
+// // For the non-amplified E28-12
+// // #define MAX_PRE_PA_POWER     13
+// // #define MIN_PRE_PA_POWER    -18
+
+// // For the non-amplified E28-20
+// #define MAX_PRE_PA_POWER     -2
+// #define MIN_PRE_PA_POWER    -18
+
+// #endif // TARGET_TX_DAG_V1
+
+// #ifdef TARGET_TX_DAG_V1_COPRO
+
+// // keep CRSF.cpp happy
+// #define GPIO_PIN_RCSIGNAL_RX -1
+// #define GPIO_PIN_RCSIGNAL_TX -1
+
+// #endif
+
+
+
+// older version
+// #ifdef TARGET_TX_PICO_E28_SX1280_V1
+// #define GPIO_PIN_NSS         10
+// #define GPIO_PIN_BUSY        38
+// #define GPIO_PIN_DIO0        -1
+// #define GPIO_PIN_DIO1        37
+// #define GPIO_PIN_MOSI        18
+// #define GPIO_PIN_MISO        23
+// #define GPIO_PIN_SCK          5
+// #define GPIO_PIN_RST         32
+// #define GPIO_PIN_RX_ENABLE    9
+// #define GPIO_PIN_TX_ENABLE   33
+// // #define GPIO_PIN_TX_ENABLE   25     // unconnected, harmless, use to disable the PA for testing
+// // #define GPIO_PIN_OLED_SDA 21
+// // #define GPIO_PIN_OLED_SCK 22
+// #define GPIO_PIN_RCSIGNAL_RX 15
+// #define GPIO_PIN_RCSIGNAL_TX 15
+// #define GPIO_PIN_BLUE_LED     2 // led1
+// #define GPIO_PIN_GREEN_LED   13 // led2
+
+// #define GPIO_PIN_LED         GPIO_PIN_BLUE_LED  // convenince for compatability
+
+// #define GPIO_PIN_DEBUG       21
+// #define GPIO_PIN_BUTTON       0
+// #endif

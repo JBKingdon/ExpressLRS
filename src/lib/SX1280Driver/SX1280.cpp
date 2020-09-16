@@ -33,6 +33,8 @@ txBaseAddress and rxBaseAddress are offset relative to the beginning of the data
 5. Define the modulation parameter signal BW SF CR
 */
 
+
+
 uint32_t beginTX;
 uint32_t endTX;
 
@@ -68,7 +70,11 @@ void SX1280Driver::Begin()
     hal.WriteCommand(SX1280_RADIO_SET_PACKETTYPE, SX1280_PACKET_TYPE_LORA); //Step 2: set packet type to LoRa
     this->ConfigModParams(currBW, currSF, currCR);                          //Step 5: Configure Modulation Params
     hal.WriteCommand(SX1280_RADIO_SET_AUTOFS, 0x01);                        //enable auto FS
+    #ifdef USE_HARDWARE_CRC
     this->SetPacketParams(12, SX1280_LORA_PACKET_IMPLICIT, 8, SX1280_LORA_CRC_ON, SX1280_LORA_IQ_NORMAL);
+    #else
+    this->SetPacketParams(12, SX1280_LORA_PACKET_IMPLICIT, 8, SX1280_LORA_CRC_OFF, SX1280_LORA_IQ_NORMAL);
+    #endif
     this->SetFrequency(this->currFreq); //Step 3: Set Freq
     this->SetFIFOaddr(0x00, 0x00);      //Step 4: Config FIFO addr
     this->SetDioIrqParams(SX1280_IRQ_RADIO_ALL, SX1280_IRQ_TX_DONE | SX1280_IRQ_RX_DONE, SX1280_IRQ_RADIO_NONE, SX1280_IRQ_RADIO_NONE); //
@@ -78,24 +84,45 @@ void ICACHE_RAM_ATTR SX1280Driver::Config(SX1280_RadioLoRaBandwidths_t bw, SX128
 {
     this->SetMode(SX1280_MODE_STDBY_XOSC);
     ConfigModParams(bw, sf, cr);
+    #ifdef USE_HARDWARE_CRC
     SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, 8, SX1280_LORA_CRC_ON, SX1280_LORA_IQ_NORMAL); // TODO don't make static etc.
+    #else
+    SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, 8, SX1280_LORA_CRC_OFF, SX1280_LORA_IQ_NORMAL); // TODO don't make static etc.
+    #endif
+
     SetFrequency(freq);
+}
+
+uint16_t ICACHE_RAM_ATTR SX1280Driver::getPowerMw()
+{
+    // for e28-20, PA output is +22dBm of the pre-PA setting, up to a max of -2 input.
+    // convert from dBm to mW
+    uint16_t mw = pow10(float(currPWR+22)/10.0f);
+    return mw;
 }
 
 void ICACHE_RAM_ATTR SX1280Driver::SetOutputPower(int8_t power)
 {
-    #if defined(TARGET_TX_ESP32_E28_SX1280_V1) || defined(TARGET_TX_PICO_E28_SX1280_V1) 
-    if (power > 0) {
-        Serial.println("power capped for E28");
-        power = 0;
-    }
+    #ifndef MAX_PRE_PA_POWER
+    #error "Must set MAX_PRE_PA_POWER for sx1280 modules"
     #endif
+
+    if (power > MAX_PRE_PA_POWER) {
+        Serial.println("power capped for E28");
+        power = MAX_PRE_PA_POWER;
+    } else if (power < -18) {
+        Serial.println("power min limit");
+        power = -18;
+    }
 
     uint8_t buf[2];
     buf[0] = power + 18;
     buf[1] = (uint8_t)SX1280_RADIO_RAMP_04_US;
     hal.WriteCommand(SX1280_RADIO_SET_TXPARAMS, buf, 2);
-    Serial.print("SetPower: ");
+
+    currPWR = power;
+
+    // Serial.print("SetPower raw: ");
     Serial.println(buf[0]);
     return;
 }
@@ -172,6 +199,13 @@ void SX1280Driver::SetMode(SX1280_RadioOperatingModes_t OPmode)
     currOpmode = OPmode;
 }
 
+/** default is low power mode, switch to high sensitivity instead
+ * */
+void setHighSensitivity()
+{
+    hal.WriteRegister(0x0891, (hal.ReadRegister(0x0891) | 0xC0));
+}
+
 void SX1280Driver::ConfigModParams(SX1280_RadioLoRaBandwidths_t bw, SX1280_RadioLoRaSpreadingFactors_t sf, SX1280_RadioLoRaCodingRates_t cr)
 {
     // Care must therefore be taken to ensure that modulation parameters are set using the command
@@ -184,6 +218,27 @@ void SX1280Driver::ConfigModParams(SX1280_RadioLoRaBandwidths_t bw, SX1280_Radio
     rfparams[2] = (uint8_t)cr;
 
     hal.WriteCommand(SX1280_RADIO_SET_MODULATIONPARAMS, rfparams, sizeof(rfparams));
+
+    /**
+     * If the Spreading Factor selected is SF5 or SF6, it is required to use WriteRegister( 0x925, 0x1E )
+     • If the Spreading Factor is SF7 or SF-8 then the command WriteRegister( 0x925, 0x37 ) must be used
+     • If the Spreading Factor is SF9, SF10, SF11 or SF12, then the command WriteRegister( 0x925, 0x32 ) must be used
+    */
+    switch (sf) {
+        case SX1280_RadioLoRaSpreadingFactors_t::SX1280_LORA_SF5:
+        case SX1280_RadioLoRaSpreadingFactors_t::SX1280_LORA_SF6:
+            hal.WriteRegister(0x925, 0x1E); // for SF5 or SF6
+            break;
+        case SX1280_RadioLoRaSpreadingFactors_t::SX1280_LORA_SF7:
+        case SX1280_RadioLoRaSpreadingFactors_t::SX1280_LORA_SF8:
+            hal.WriteRegister(0x925, 0x37); // for SF7 or SF8
+            break;
+        default:
+            hal.WriteRegister(0x925, 0x32); // for SF7 or SF8
+    }
+
+    setHighSensitivity();
+
 }
 
 void SX1280Driver::SetFrequency(uint32_t Reqfreq)
@@ -282,15 +337,18 @@ void SX1280Driver::RXnbISR()
 {
     instance->currOpmode = SX1280_MODE_FS; // XXX is this true? Unless we're doing single rx with timeout, we'll still be in rx mode
 
+    // Need to check for hardware crc error
+    #ifdef USE_HARDWARE_CRC
     // grab the status before we clear it
     uint16_t irqStat = GetIrqStatus();
     instance->ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
-
-    // Need to check for hardware crc error
     if (irqStat & 0b1000000) {
         // Serial.println("bad hw crc");
         return;
     }
+    #else
+    instance->ClearIrqStatus(SX1280_IRQ_RADIO_ALL);
+    #endif
 
     uint8_t FIFOaddr = instance->GetRxBufferAddr();
     hal.ReadBuffer(FIFOaddr, instance->RXdataBuffer, 8);

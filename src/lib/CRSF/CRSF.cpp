@@ -6,14 +6,18 @@
 //#define DEBUG_CRSF_NO_OUTPUT // debug, don't send RC msgs over UART
 
 #ifdef PLATFORM_ESP32
+#ifndef USE_IO_COPRO
 HardwareSerial SerialPort(1);
 HardwareSerial CRSF::Port = SerialPort;
+#else
+HardwareSerial CRSF::Port = NULL; // hacky, find the uses instead
+#endif // USE_IO_COPRO
 portMUX_TYPE FIFOmux = portMUX_INITIALIZER_UNLOCKED;
 TaskHandle_t xHandleOpenTXsync = NULL;
 TaskHandle_t xESP32uartTask = NULL;
 TaskHandle_t xESP32uartWDT = NULL;
 SemaphoreHandle_t mutexOutFIFO = NULL;
-#endif
+#endif // PLATFORM_ESP32
 
 #if defined(TARGET_R9M_TX) || defined(TARGET_R9M_LITE_TX)
 HardwareSerial CRSF::Port(USART3);
@@ -70,8 +74,13 @@ uint8_t CRSF::nextSwitchIndex = 0; // for round-robin sequential switches
 
 volatile uint8_t CRSF::ParameterUpdateData[2] = {0};
 
+#ifdef USE_ELRS_CRSF_EXTENSIONS
+volatile crsf_elrs_channels_s CRSF::PackedRCdataOut;
+volatile elrsPayloadLinkstatistics_s CRSF::LinkStatistics;
+#else
 volatile crsf_channels_s CRSF::PackedRCdataOut;
 volatile crsfPayloadLinkstatistics_s CRSF::LinkStatistics;
+#endif
 volatile crsf_sensor_battery_s CRSF::TLMbattSensor;
 
 volatile uint32_t CRSF::RCdataLastRecv = 0;
@@ -83,7 +92,7 @@ void CRSF::Begin()
 {
     Serial.println("About to start CRSF task...");
 
-#ifdef PLATFORM_ESP32
+#if defined(PLATFORM_ESP32) && !defined(USE_IO_COPRO)
     mutexOutFIFO = xSemaphoreCreateMutex();
     xTaskCreatePinnedToCore(ESP32uartTask, "ESP32uartTask", 3000, NULL, 10, &xESP32uartTask, 1);
     xTaskCreatePinnedToCore(UARTwdt, "ESP32uartWDTTask", 2000, NULL, 10, &xESP32uartWDT, 1);
@@ -343,7 +352,11 @@ void ICACHE_RAM_ATTR CRSF::sendSyncPacketToTX(void *pvParameters) // in values i
 
             outBuffer[0] = CRSF_ADDRESS_FLIGHT_CONTROLLER;
             outBuffer[1] = LinkStatisticsFrameLength + 2;
+            #ifdef USE_ELRS_CRSF_EXTENSIONS
+            outBuffer[2] = CRSF_FRAMETYPE_LINK_STATISTICS_ELRS;
+            #else
             outBuffer[2] = CRSF_FRAMETYPE_LINK_STATISTICS;
+            #endif
 
             memcpy(outBuffer + 3, (byte *)&LinkStatistics, LinkStatisticsFrameLength);
 
@@ -363,7 +376,11 @@ void ICACHE_RAM_ATTR CRSF::sendSyncPacketToTX(void *pvParameters) // in values i
 
             outBuffer[0] = CRSF_ADDRESS_FLIGHT_CONTROLLER;
             outBuffer[1] = RCframeLength + 2;
+            #ifdef USE_ELRS_CRSF_EXTENSIONS
+            outBuffer[2] = CRSF_FRAMETYPE_RC_ELRS;
+            #else
             outBuffer[2] = CRSF_FRAMETYPE_RC_CHANNELS_PACKED;
+            #endif
 
             memcpy(outBuffer + 3, (byte *)&PackedRCdataOut, RCframeLength);
 
@@ -810,7 +827,7 @@ void ICACHE_RAM_ATTR CRSF::sendSyncPacketToTX(void *pvParameters) // in values i
 
 #endif
 
-            /**
+/**
  * Convert the rc data corresponding to switches to 2 bit values.
  *
  * I'm defining channels 4 through 11 inclusive as representing switches

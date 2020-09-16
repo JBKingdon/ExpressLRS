@@ -46,7 +46,7 @@ public:
     uint32_t currFreq = 2400000000;
     SX1280_RadioOperatingModes_t currOpmode = SX1280_MODE_SLEEP;
 
-    // static uint8_t currPWR;
+    int8_t currPWR;
     // static uint8_t maxPWR;
 
     ///////////////////////////////////
@@ -81,6 +81,8 @@ public:
     void ICACHE_RAM_ATTR SetFrequency(uint32_t freq);
     void ICACHE_RAM_ATTR SetFIFOaddr(uint8_t txBaseAddr, uint8_t rxBaseAddr);
     void SetOutputPower(int8_t power);
+
+    uint16_t getPowerMw();
 
     int32_t ICACHE_RAM_ATTR GetFrequencyError();
 

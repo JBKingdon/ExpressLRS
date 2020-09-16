@@ -29,8 +29,14 @@
 
 #define CRSF_SYNC_BYTE 0xC8
 
+#ifdef USE_ELRS_CRSF_EXTENSIONS
+#define RCframeLength 7             // length of the RC data packed bytes frame. 4 x 10 bit analog + 8 x 2bit switches
+#define LinkStatisticsFrameLength 4
+#else
 #define RCframeLength 22             // length of the RC data packed bytes frame. 16 channels in 11 bits each.
-#define LinkStatisticsFrameLength 10 //
+#define LinkStatisticsFrameLength 10
+#endif
+
 #define OpenTXsyncFrameLength 11     //
 #define BattSensorFrameLength 8      //
 #define VTXcontrolFrameLength 12     //
@@ -88,9 +94,11 @@ typedef enum
     CRSF_FRAMETYPE_GPS = 0x02,
     CRSF_FRAMETYPE_BATTERY_SENSOR = 0x08,
     CRSF_FRAMETYPE_LINK_STATISTICS = 0x14,
+    CRSF_FRAMETYPE_LINK_STATISTICS_ELRS = 0x15,
     CRSF_FRAMETYPE_OPENTX_SYNC = 0x10,
     CRSF_FRAMETYPE_RADIO_ID = 0x3A,
     CRSF_FRAMETYPE_RC_CHANNELS_PACKED = 0x16,
+    CRSF_FRAMETYPE_RC_ELRS = 0x17,
     CRSF_FRAMETYPE_ATTITUDE = 0x1E,
     CRSF_FRAMETYPE_FLIGHT_MODE = 0x21,
     // Extended Header Frames, range: 0x28 to 0x96
@@ -190,6 +198,23 @@ typedef struct crsf_channels_s
     unsigned ch15 : 11;
 } PACKED crsf_channels_t;
 
+typedef struct crsf_elrs_channels_s {
+    // 56 bits of data (10 bits per channel * 4 channels + 2 bits per switch * 8 switches) = 7 bytes.
+    unsigned int chan0 : 10;
+    unsigned int chan1 : 10;
+    unsigned int chan2 : 10;
+    unsigned int chan3 : 10;
+    unsigned int aux1 : 2;
+    unsigned int aux2 : 2;
+    unsigned int aux3 : 2;
+    unsigned int aux4 : 2;
+    unsigned int aux5 : 2;
+    unsigned int aux6 : 2;
+    unsigned int aux7 : 2;
+    unsigned int aux8 : 2;
+} PACKED crsf_elrs_channels_t;
+
+
 /**
  * Define the shape of a standard packet
  * A 'standard' header followed by the packed channels
@@ -260,6 +285,17 @@ typedef struct crsfPayloadLinkstatistics_s
 } crsfLinkStatistics_t;
 
 typedef struct crsfPayloadLinkstatistics_s crsfLinkStatistics_t;
+
+typedef struct elrsPayloadLinkstatistics_s
+{
+    uint8_t rssi;
+    uint8_t link_quality;
+    int8_t  snr;
+    uint8_t rf_Mode;
+} elrsLinkStatistics_t;
+
+typedef struct crsfPayloadLinkstatistics_s crsfLinkStatistics_t;
+
 
 // typedef struct crsfOpenTXsyncFrame_s
 // {
@@ -384,8 +420,13 @@ public:
 
     /////Variables/////
 
+    #ifdef USE_ELRS_CRSF_EXTENSIONS
+    static volatile crsf_elrs_channels_s PackedRCdataOut;
+    static volatile elrsPayloadLinkstatistics_s LinkStatistics; // Link Statisitics Stored as Struct
+    #else
     static volatile crsf_channels_s PackedRCdataOut;            // RC data in packed format for output.
     static volatile crsfPayloadLinkstatistics_s LinkStatistics; // Link Statisitics Stored as Struct
+    #endif
     static volatile crsf_sensor_battery_s TLMbattSensor;
 
     static void Begin(); //setup timers etc

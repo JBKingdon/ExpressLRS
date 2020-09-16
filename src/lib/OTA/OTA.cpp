@@ -38,6 +38,7 @@ void ICACHE_RAM_ATTR GenerateChannelDataHybridSwitch8(volatile uint8_t* Buffer, 
                            ((crsf->ChannelDataIn[2] & 0b110) << 1) + 
                            ((crsf->ChannelDataIn[3] & 0b110) >> 1);
 
+
   // switch 0 is sent on every packet - intended for low latency arm/disarm
   Buffer[6] = (crsf->currentSwitches[0] & 0b11) << 5; // note this leaves the top bit of byte 6 unused
 
@@ -48,6 +49,7 @@ void ICACHE_RAM_ATTR GenerateChannelDataHybridSwitch8(volatile uint8_t* Buffer, 
   // put the bits into buf[6]. nextSwitchIndex is in the range 1 through 7 so takes 3 bits
   // currentSwitches[nextSwitchIndex] is in the range 0 through 2, takes 2 bits.
   Buffer[6] += (nextSwitchIndex << 2) + value;
+
 
   // update the sent value
   crsf->setSentSwitch(nextSwitchIndex, value);
@@ -65,6 +67,51 @@ void ICACHE_RAM_ATTR GenerateChannelDataHybridSwitch8(volatile uint8_t* Buffer, 
  */
 void ICACHE_RAM_ATTR UnpackChannelDataHybridSwitches8(volatile uint8_t* Buffer, CRSF *crsf)
 {
+    #ifdef USE_ELRS_CRSF_EXTENSIONS
+    // When using the elrs extensions we send in our native format and the FC will do the
+    // conversions
+    // The analog channels
+    crsf->PackedRCdataOut.chan0 = (Buffer[1] << 2) + ((Buffer[5] & 0b11000000) >> 6);
+    crsf->PackedRCdataOut.chan1 = (Buffer[2] << 2) + ((Buffer[5] & 0b00110000) >> 4);
+    crsf->PackedRCdataOut.chan2 = (Buffer[3] << 2) + ((Buffer[5] & 0b00001100) >> 2);
+    crsf->PackedRCdataOut.chan3 = (Buffer[4] << 2) + ((Buffer[5] & 0b00000011) >> 0);
+
+    // The low latency switch
+    crsf->PackedRCdataOut.aux1 = (Buffer[6] & 0b01100000) >> 5;
+
+    // The round-robin switch
+    uint8_t switchIndex = (Buffer[6] & 0b11100) >> 2;
+    uint16_t switchValue = Buffer[6] & 0b11;
+
+    switch (switchIndex) {
+        case 0:   // we should never get index 0 here since that is the low latency switch
+            Serial.println("BAD switchIndex 0");
+            break;
+        case 1:
+            crsf->PackedRCdataOut.aux2 = switchValue;
+            break;
+        case 2:
+            crsf->PackedRCdataOut.aux3 = switchValue;
+            break;
+        case 3:
+            crsf->PackedRCdataOut.aux4 = switchValue;
+            break;
+        case 4:
+            crsf->PackedRCdataOut.aux5 = switchValue;
+            break;
+        case 5:
+            crsf->PackedRCdataOut.aux6 = switchValue;
+            break;
+        case 6:
+            crsf->PackedRCdataOut.aux7 = switchValue;
+            break;
+        case 7:
+            crsf->PackedRCdataOut.aux8 = switchValue;
+            break;
+    }
+
+    #else
+    // Standard crossfire protocol, we do the conversion up front
     // The analog channels
     crsf->PackedRCdataOut.ch0 = (Buffer[1] << 3) + ((Buffer[5] & 0b11000000) >> 5);
     crsf->PackedRCdataOut.ch1 = (Buffer[2] << 3) + ((Buffer[5] & 0b00110000) >> 3);
@@ -104,6 +151,7 @@ void ICACHE_RAM_ATTR UnpackChannelDataHybridSwitches8(volatile uint8_t* Buffer, 
             crsf->PackedRCdataOut.ch11 = switchValue;
             break;
     }
+    #endif // normal crossfire protocol
 }
 
 #endif // HYBRID_SWITCHES_8

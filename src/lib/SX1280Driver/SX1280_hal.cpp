@@ -35,7 +35,7 @@ SX1280Hal::SX1280Hal()
 void SX1280Hal::end()
 {
     SPI.end();
-    detachInterrupt(GPIO_PIN_DIO0);
+    detachInterrupt(GPIO_PIN_DIO1);
 }
 
 void SX1280Hal::init()
@@ -74,7 +74,16 @@ void SX1280Hal::init()
 #ifdef PLATFORM_ESP32
     SPI.begin(GPIO_PIN_SCK, GPIO_PIN_MISO, GPIO_PIN_MOSI, -1); // sck, miso, mosi, ss (ss can be any GPIO)
     #ifdef TARGET_TX_PICO_E28_SX1280_V1
-    SPI.setFrequency(8000000);
+    // SPI.setFrequency(18000000);
+    // SPI.setFrequency(8000000);
+    // Serial.println("XXX setting low spi speed");
+    // SPI.setFrequency(1000000);
+
+    Serial.println("XXX setting fastest spi speed");
+    Serial.println("starting SPI transaction");
+    SPISettings settings(18000000, SPI_MSBFIRST, SPI_MODE0);
+    SPI.beginTransaction(settings);
+
     #else
     SPI.setFrequency(18000000);
     #endif
@@ -84,10 +93,13 @@ void SX1280Hal::init()
     Serial.println("PLATFORM_ESP8266");
     SPI.begin();
     //SPI.pins(this->SX1280_SCK, this->SX1280_MISO, this->SX1280_MOSI, -1);
-    SPI.setBitOrder(MSBFIRST);
-    SPI.setDataMode(SPI_MODE0);
+    // SPI.setBitOrder(MSBFIRST);
+    // SPI.setDataMode(SPI_MODE0);
     // SPI.setFrequency(18000000);
-    SPI.setFrequency(8000000);
+    // SPI.setFrequency(8000000);
+    Serial.println("starting SPI transaction");
+    SPISettings settings(8000000, MSBFIRST, SPI_MODE0);
+    SPI.beginTransaction(settings);
 #endif
 
 #ifdef PLATFORM_STM32
@@ -274,6 +286,8 @@ void ICACHE_RAM_ATTR SX1280Hal::ReadBuffer(uint8_t offset, volatile uint8_t *buf
 
 void ICACHE_RAM_ATTR SX1280Hal::WaitOnBusy()
 {
+    const uint MAX_WAIT = 100000;
+    uint count = 0;
     while (digitalRead(GPIO_PIN_BUSY) == HIGH)
     {
 #ifdef PLATFORM_STM32
@@ -283,6 +297,11 @@ void ICACHE_RAM_ATTR SX1280Hal::WaitOnBusy()
 #elif PLATFORM_ESP8266
         _NOP();
 #endif
+        count++;
+        if (count > MAX_WAIT) {
+            Serial.println("busy timeout");
+            return;
+        }
     }
 }
 

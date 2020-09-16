@@ -59,7 +59,8 @@ void POWERMGNT::setPower(PowerLevels_e Power)
 #endif
 
 #if defined(TARGET_TX_ESP32_E28_SX1280_V1) || defined(TARGET_TX_PICO_E28_SX1280_V1)
-    Radio.SetOutputPower(-7);
+    Serial.println("XXX setPower hardcoded -7");
+    Radio.SetOutputPower(-7);   // XXX hacky hacky hacky
     CurrentPower = Power;
     return;
 #endif

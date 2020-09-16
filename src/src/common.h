@@ -58,14 +58,16 @@ typedef enum
 
 typedef enum
 {
-    RATE_500HZ = 0,
-    RATE_250HZ = 1,
-    RATE_200HZ = 2,
-    RATE_150HZ = 3,
-    RATE_100HZ = 4,
-    RATE_50HZ = 5,
-    RATE_25HZ = 6,
-    RATE_4HZ = 7
+    RATE_1KHZ  = 0,
+    RATE_800HZ = 1,
+    RATE_500HZ = 2,
+    RATE_250HZ = 3,
+    RATE_200HZ = 4,
+    RATE_150HZ = 5,
+    RATE_100HZ = 6,
+    RATE_50HZ = 7,
+    RATE_25HZ = 8,
+    RATE_4HZ = 9
 } expresslrs_RFrates_e; // Max value of 16 since only 4 bits have been assigned in the sync package.
 
 typedef struct expresslrs_rf_pref_params_s
@@ -75,7 +77,7 @@ typedef struct expresslrs_rf_pref_params_s
     int32_t RXsensitivity;          //expected RF sensitivity based on
     uint32_t TOA;                   //time on air in microseconds
     uint32_t RFmodeCycleInterval;
-    uint32_t RFmodeCycleAddtionalTime;
+    uint32_t RFmodeCycleAddtionalTime;  // the time to keep trying in tentative mode before giving up and starting over
     uint32_t SyncPktIntervalDisconnected;
     uint32_t SyncPktIntervalConnected;
 
@@ -101,8 +103,8 @@ typedef struct expresslrs_mod_settings_s
 #endif
 
 #if defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
-#define RATE_MAX 4
-#define RATE_DEFAULT 1
+#define RATE_MAX 6  // actually the number of rates, so the max value is RATE_MAX-1
+#define RATE_DEFAULT 2
 typedef struct expresslrs_mod_settings_s
 {
     uint8_t index;
