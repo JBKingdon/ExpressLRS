@@ -53,6 +53,7 @@ private:
 public:
     DoublePT1filterInt();
     int32_t update(const int32_t x);
+    uint32_t getK();
     void setK(const uint32_t newK);
     int32_t getCurrent();
 };
@@ -101,5 +102,7 @@ public:
 
     // get the current filtered value
     int32_t getCurrent();
+    
+    float getCutoff();
 
 };

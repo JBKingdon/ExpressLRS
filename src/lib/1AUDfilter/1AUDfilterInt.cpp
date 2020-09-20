@@ -33,11 +33,14 @@
  * ----------------------------------------------------------------------------------------
 */
 
-#include <Arduino.h>
+// #include <Arduino.h>
 #include "1AUDfilterInt.h"
 
-// 2 * PI * 1000 for use when calculating k * 1000
-#define TWO_PI_1K (6434)
+// #include <stdio.h>
+
+#define K_SHIFT_BITS 16
+// 2 * PI * 2^K_SHIFT_BITS for use when calculating k
+#define TWO_PI_SHIFTED (411775)
 
 #define PT_SCALE (128)
 
@@ -47,22 +50,27 @@ DoublePT1filterInt::DoublePT1filterInt()
     current2 = 0;
 }
 
-int32_t ICACHE_RAM_ATTR DoublePT1filterInt::update(const int32_t x)
+int32_t DoublePT1filterInt::update(const int32_t x)
 {
-    // factor of 1024 to compensate for resolution multiplier on the stored k
-    current1 = current1 + ((k * (x - current1)) >> 10);
-    current2 = current2 + ((k * (current1 - current2)) >> 10);
+    // factor of 2^K_SHIFT_BITS to compensate for resolution multiplier on the stored k
+    current1 = current1 + ((k * (x - current1)) >> K_SHIFT_BITS);
+    current2 = current2 + ((k * (current1 - current2)) >> K_SHIFT_BITS);
     return current2;
 }
 
-int32_t ICACHE_RAM_ATTR DoublePT1filterInt::getCurrent()
+int32_t DoublePT1filterInt::getCurrent()
 {
     return current2;
 }
 
-void ICACHE_RAM_ATTR DoublePT1filterInt::setK(const uint32_t newK)
+void DoublePT1filterInt::setK(const uint32_t newK)
 {
     k = newK;
+}
+
+uint32_t DoublePT1filterInt::getK()
+{
+    return k;
 }
 
 /**
@@ -90,33 +98,33 @@ OneAUDfilterInt::OneAUDfilterInt(const uint32_t _minFreq, const uint32_t _maxFre
     prevSmoothed = 0;
 
     // set k for the derivative (with a factor of 1000 to allow for storing in an int)
-    const uint32_t k =  dCutoff * TWO_PI_1K / sampleRate;
+    const uint32_t k =  dCutoff * TWO_PI_SHIFTED / sampleRate;
 
-    Serial.printf("d k %u\n", k);
+    // Serial.printf("d k %u\n", k);
     dFilt.setK(k);
 
     // Set k for the output filter
-    const uint32_t kOut = minFreq * TWO_PI_1K / sampleRate;
-    Serial.printf("kOut %u\n", kOut);
+    const uint32_t kOut = minFreq * TWO_PI_SHIFTED / sampleRate;
+    // Serial.printf("kOut %u\n", kOut);
     oFilt.setK(kOut);
 }
 
-void ICACHE_RAM_ATTR OneAUDfilterInt::setSampleRate(const uint32_t newSampleRate)
+void OneAUDfilterInt::setSampleRate(const uint32_t newSampleRate)
 {
     sampleRate = newSampleRate;
     maxSlewPerSample = maxSlewPerSecond / sampleRate;
 
-    uint32_t kD = dCutoff * TWO_PI_1K / sampleRate;
-    // make sure kD is reasonable
-    if (kD >= 1000) {
-        kD = 990;
-    }
+    uint32_t kD = dCutoff * TWO_PI_SHIFTED / sampleRate;
+    // make sure kD is reasonable TODO figure this out again
+    // if (kD >= 1000) {
+    //     kD = 990;
+    // }
     dFilt.setK(kD);
 
     // The output PT1s get a new K at each update, so no need to set here
 }
 
-int32_t ICACHE_RAM_ATTR OneAUDfilterInt::slewLimit(const int32_t x)
+int32_t OneAUDfilterInt::slewLimit(const int32_t x)
 {
     // static uint32_t avAbsSlew = 0;
 
@@ -145,7 +153,9 @@ int32_t ICACHE_RAM_ATTR OneAUDfilterInt::slewLimit(const int32_t x)
 }
 
 // update the filter with a new value
-int32_t ICACHE_RAM_ATTR OneAUDfilterInt::update(const int32_t newValue)
+// scaling is crucial to retain precision while avoiding overflow
+// TODO figure our the range of input values that don't overflow
+int32_t OneAUDfilterInt::update(const int32_t newValue)
 {
     // slew limit the input
     const int32_t limitedNew = slewLimit(newValue);
@@ -154,27 +164,29 @@ int32_t ICACHE_RAM_ATTR OneAUDfilterInt::update(const int32_t newValue)
     const int32_t df = dFilt.update(limitedNew * PT_SCALE);
 
     // get differential of filtered input
-    // XXX this might not do very well with integers. Scaled impl?
     const int32_t dx = (df - prevSmoothed) * sampleRate;
     const int32_t absDx = dx >= 0 ? dx : -dx;
+    
+    // printf("dx, abdsDx %d %d\n", dx, absDx);
 
     // update prevSmoothed
     prevSmoothed = df;
 
     // ## adjust cutoff upwards using dx and Beta
-    uint32_t fMain = minFreq + (absDx / inverseBeta ); // NB fMain is scaled by PT_SCALE
-
+    uint32_t fMain = (minFreq) + (absDx / (inverseBeta * PT_SCALE)); 
     // Serial.printf("dx %d fMain %d ", absDx, fMain);
-    if (fMain > (maxFreq * PT_SCALE)) {
-        fMain = maxFreq * PT_SCALE;
+    if (fMain > (maxFreq)) {
+        fMain = maxFreq;
     }
+
+    // printf("%d\n", fMain/PT_SCALE);
 
     // ## get the k value for the cutoff 
     // kCutoff = 2*PI*cutoff/sampleRate. 
-    const uint32_t kMain = fMain * TWO_PI_1K / (PT_SCALE * sampleRate);
+    const uint32_t kMain = fMain * TWO_PI_SHIFTED / sampleRate;
     oFilt.setK(kMain);
 
-    // Serial.printf("kMain %u\n", kMain);
+    // printf("kMain %u\n", kMain);
 
     // apply the main filter to the input
     const int32_t mf = oFilt.update(limitedNew * PT_SCALE);
@@ -186,7 +198,12 @@ int32_t ICACHE_RAM_ATTR OneAUDfilterInt::update(const int32_t newValue)
 }
 
 // get the current filtered value
-int32_t ICACHE_RAM_ATTR OneAUDfilterInt::getCurrent()
+int32_t OneAUDfilterInt::getCurrent()
 {
     return oFilt.getCurrent() / PT_SCALE;
+}
+
+float OneAUDfilterInt::getCutoff()
+{
+    return (float(oFilt.getK()) * sampleRate) / TWO_PI_SHIFTED;
 }
