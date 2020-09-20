@@ -13,23 +13,23 @@
 
 TFT_eSPI tft = TFT_eSPI();
 
-switchState_t switches;
+switchState_t switches, newSwitches;
 
 txMode_t txMode;
 rxTelem_t rxTelem;
 
 // static volatile bool sendSwitchesToMain = false;
 
-static unsigned int lastSwitchSentTime = 0;
+// static unsigned int lastSwitchSentTime = 0;
+static unsigned int lastSwitchChangedTime = 0;
 
 static unsigned long armStartTime = 0;
 static unsigned long armEndTime = 0;
 static unsigned long lastSaveTime = 0;
 
 
-// minimum time in ms between sending switch packets to the main processor
-// helps prevent switch bounce from spamming the uart link.
-#define SWITCH_SEND_MIN_REPEAT 20
+// time in ms that a switch might bounce for
+#define SWITCH_BOUNCE_TIME 3
 
 // test value for the rot enc
 uint16_t rotCounter = 0;
@@ -51,25 +51,17 @@ static unsigned int lastUIinput = 0;
  * Send current switch positions to the main processor
  * May be called from the ISRs
  */
-void sendSwitches(const unsigned long nowMs)
+void sendSwitches()
 {
-    // check if we already sent switch state recently
-    if (nowMs < (lastSwitchSentTime + SWITCH_SEND_MIN_REPEAT)) {
-        return;
-    }
+    switchState_u *switchU = (switchState_u*)&switches;
 
-    // sendSwitchesToMain = false;
-
-    // take a copy of the switches so the values don't change while/after we calc crc
-    switchState_u localCopy;
-    memcpy(&localCopy, &switches, sizeof(switches)-1);
+    // copy the new switch values to be sent
+    memcpy(&switches, &newSwitches, sizeof(switches)-1);
 
     // Calculate the crc. Don't include the old crc in the crc calc or it will never match
-    localCopy.switchState.crc = CalcCRC(localCopy.dataBytes, sizeof(switchState_u)-1);
+    switchU->switchState.crc = CalcCRC(switchU->dataBytes, sizeof(switchState_u)-1);
 
-    Serial2.write((const char*)localCopy.dataBytes, sizeof(switchState_u));
-
-    lastSwitchSentTime = nowMs;
+    Serial2.write((const char*)switchU->dataBytes, sizeof(switchState_u));
 }
 
 /** Send a parameter change request to the Main processor
@@ -141,52 +133,65 @@ unsigned int getSwitchValue(uint32_t highPin, uint32_t lowPin)
 
 void initSwitchValues()
 {
-    switches.aux1 = getSwitchValue(AUX1_HIGH, AUX1_LOW);
-    switches.aux2 = getSwitchValue(AUX2_HIGH, AUX2_LOW);
-    switches.aux3 = getSwitchValue(AUX3_HIGH, AUX3_LOW);
-    switches.aux4 = getSwitchValue(AUX4_HIGH, AUX4_LOW);
+    newSwitches.aux1 = getSwitchValue(AUX1_HIGH, AUX1_LOW);
+    newSwitches.aux2 = getSwitchValue(AUX2_HIGH, AUX2_LOW);
+    newSwitches.aux3 = getSwitchValue(AUX3_HIGH, AUX3_LOW);
+    newSwitches.aux4 = getSwitchValue(AUX4_HIGH, AUX4_LOW);
 }
 
 void switch1_ISR()
 {
-    unsigned int s = getSwitchValue(AUX1_HIGH, AUX1_LOW);
-    if (switches.aux1 != s) {
-        unsigned long now = millis();
-        if (now > (lastSwitchSentTime+10)) {
-            if (s>0 && switches.aux1==0) {
-                armStartTime = now;
-                armEndTime = 0;
-            } else if (s==0) {
-                armEndTime = now;
-            }
-        }
-        switches.aux1 = s;
-        sendSwitches(now);
-    }
+    uint32_t now = millis();
+    // Serial.println(now - lastSwitchChangedTime);
+    lastSwitchChangedTime = now;
+    newSwitches.aux1 = getSwitchValue(AUX1_HIGH, AUX1_LOW);;
+
+    // if (switches.aux1 != s) {
+    //     unsigned long now = millis();
+    //     if (now > (lastSwitchSentTime+10)) {
+    //         if (s>0 && switches.aux1==0) {
+    //             armStartTime = now;
+    //             armEndTime = 0;
+    //         } else if (s==0) {
+    //             armEndTime = now;
+    //         }
+    //     }
+    //     switches.aux1 = s;
+    //     sendSwitches(now);
+    // }
 }
 void switch2_ISR()
 {
-    unsigned int s = getSwitchValue(AUX2_HIGH, AUX2_LOW);
-    if (switches.aux2 != s) {
-        switches.aux2 = s;
-        sendSwitches(millis());
-    }
+    lastSwitchChangedTime = millis();
+    newSwitches.aux2 = getSwitchValue(AUX2_HIGH, AUX2_LOW);
+
+    // unsigned int s = getSwitchValue(AUX2_HIGH, AUX2_LOW);
+    // if (switches.aux2 != s) {
+    //     switches.aux2 = s;
+    //     sendSwitches(millis());
+    // }
 }
 void switch3_ISR()
 {
-    unsigned int s = getSwitchValue(AUX3_HIGH, AUX3_LOW);
-    if (switches.aux3 != s) {
-        switches.aux3 = s;
-        sendSwitches(millis());
-    }
+    lastSwitchChangedTime = millis();
+    newSwitches.aux3 = getSwitchValue(AUX3_HIGH, AUX3_LOW);
+
+    // unsigned int s = getSwitchValue(AUX3_HIGH, AUX3_LOW);
+    // if (switches.aux3 != s) {
+    //     switches.aux3 = s;
+    //     sendSwitches(millis());
+    // }
 }
 void switch4_ISR()
 {
-    unsigned int s = getSwitchValue(AUX4_HIGH, AUX4_LOW);
-    if (switches.aux4 != s) {
-        switches.aux4 = s;
-        sendSwitches(millis());
-    }
+    lastSwitchChangedTime = millis();
+    newSwitches.aux4 = getSwitchValue(AUX4_HIGH, AUX4_LOW);
+
+    // unsigned int s = getSwitchValue(AUX4_HIGH, AUX4_LOW);
+    // if (switches.aux4 != s) {
+    //     switches.aux4 = s;
+    //     sendSwitches(millis());
+    // }
 }
 
 /** Draw the infrequently updated display elements
@@ -367,6 +372,7 @@ void setup()
 
     // init the switch values
     initSwitchValues();
+    lastSwitchChangedTime = millis();   // switches will be sent to the main processor from loop()
 
     // connect the inputs to the isrs
     attachInterrupt(digitalPinToInterrupt(AUX1_LOW),  switch1_ISR, CHANGE);
@@ -613,10 +619,28 @@ void loop()
     static unsigned long button2LastPress = 0;
     static bool b2Down = false;
 
-    unsigned long now = millis();
-
     if (Serial2.available()) {
         readFromMainCPU();
+    }
+
+    unsigned long now = millis();
+
+    // has there been a switch change, and has it been long enough to stop bouncing?
+    if (lastSwitchChangedTime && now > (lastSwitchChangedTime + SWITCH_BOUNCE_TIME))
+    {
+        lastSwitchChangedTime = 0;  // do this first to make the window for missing a switch change as small as possible
+        // if the arm switch changed, do the timer stuff
+        if (switches.aux1 != newSwitches.aux1) {
+            if (newSwitches.aux1 == 2) {
+                // we have become armed, so start the timer and clear previous end time
+                armStartTime = now;
+                armEndTime = 0;
+            } else if (switches.aux1 == 2) {
+                // we used to be armed, so record the end time
+                armEndTime = now;
+            }
+        }
+        sendSwitches();
     }
 
     // read buttons
