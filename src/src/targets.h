@@ -283,6 +283,56 @@ https://github.com/jaxxzer
 
 #endif // TARGET_TX_DAG_V1
 
+// For the 3rd DAG handset prototype
+
+#ifdef TARGET_TX_DAG_V3
+
+#define USE_TFT
+#define USE_ADC_COPRO
+
+// if using ttgo t-display, lcd is hardwired to
+// 19, 18, 5, 16, 23, 14
+
+
+#define GPIO_PIN_SCK        26
+#define GPIO_PIN_MISO       25
+#define GPIO_PIN_ADCCP_SS   27
+#define GPIO_PIN_MOSI       33
+
+
+#define GPIO_PIN_NSS         21
+#define GPIO_PIN_BUSY        14
+#define GPIO_PIN_DIO0        -1
+#define GPIO_PIN_DIO1        27
+// #define GPIO_PIN_MOSI        23
+// #define GPIO_PIN_MISO        19
+// #define GPIO_PIN_SCK         18
+#define GPIO_PIN_RST         12
+#define GPIO_PIN_RX_ENABLE   22
+#define GPIO_PIN_TX_ENABLE   13
+// #define GPIO_PIN_RX_ENABLE   -1     // e28-12 doesn't have enables
+// #define GPIO_PIN_TX_ENABLE   -1
+#define GPIO_PIN_RCSIGNAL_RX -1 // keep the crsf lib happy
+#define GPIO_PIN_RCSIGNAL_TX -1
+#define GPIO_PIN_LED         2
+
+#define GPIO_PIN_COPRO_RX   15
+#define GPIO_PIN_COPRO_TX   17
+
+#define GPIO_PIN_DEBUG       -1
+#define GPIO_PIN_BUTTON       0
+
+// For the non-amplified E28-12
+// #define MAX_PRE_PA_POWER     13
+// #define MIN_PRE_PA_POWER    -18
+
+// For the non-amplified E28-20
+#define MAX_PRE_PA_POWER     -2
+#define MIN_PRE_PA_POWER    -18
+
+#endif // TARGET_TX_DAG_V1
+
+
 #ifdef TARGET_TX_DAG_V1_COPRO
 
 // keep CRSF.cpp happy

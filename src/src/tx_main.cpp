@@ -51,7 +51,7 @@ static int radioPower = -10; // arbitrary but safe default
 #ifdef USE_TFT
 #include <TFT_eSPI.h>
 #endif
-#include "OneEuroFilter.h"
+// #include "OneEuroFilter.h"
 // #include "driver/uart.h"
 
 #ifdef USE_IO_COPRO
@@ -1040,6 +1040,28 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
     }
     else
     {
+      #ifdef USE_ADC_COPRO
+      // Get gimbal data from ADC copro
+
+      uint16_t buffer[4];
+
+      digitalWrite(GPIO_PIN_ADCCP_SS, LOW);
+
+      // mosi is not connected, so it doesn't matter what we use as output
+      SPI.transferBytes((uint8_t *)buffer, (uint8_t *)buffer, 2 * 4);
+
+      digitalWrite(GPIO_PIN_ADCCP_SS, HIGH);
+
+      crsf.ChannelDataIn[0] = scaleRollData(buffer[0]);
+      crsf.ChannelDataIn[1] = scalePitchData(buffer[1]);
+      crsf.ChannelDataIn[2] = scaleThrottleData(buffer[2]);
+      crsf.ChannelDataIn[3] = scaleYawData(buffer[3]);
+
+      // Serial.print(buffer[0]); Serial.print(' ');
+      // Serial.print(crsf.ChannelDataIn[0]); Serial.println();
+
+      #else // not using USE_ADC_COPRO
+
       // copy the current stick positions into the crsf data structure
       crsf.ChannelDataIn[0] = scaleRollData(aud_roll.getCurrentAsInt());
       crsf.ChannelDataIn[1] = scalePitchData(aud_pitch.getCurrentAsInt());
@@ -1050,6 +1072,8 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
       // crsf.ChannelDataIn[1] = scalePitchData(audI_pitch.getCurrent());
       // crsf.ChannelDataIn[2] = scaleThrottleData(audI_throttle.getCurrent());
       // crsf.ChannelDataIn[3] = scaleYawData(audI_yaw.getCurrent());
+
+      #endif // USE_ADC_COPRO
 
       // debug
       // Serial.print("0 ");
@@ -1068,7 +1092,7 @@ void ICACHE_RAM_ATTR SendRCdataToRF()
   ///// Next, Calculate the CRC and put it into the buffer /////
   uint8_t crc = CalcCRC(Radio.TXdataBuffer, 7) + CRCCaesarCipher;
   Radio.TXdataBuffer[7] = crc;
-  Radio.TXnb(Radio.TXdataBuffer, 8);
+  // Radio.TXnb(Radio.TXdataBuffer, 8); // XXX commented out for testing
 
 
 
@@ -1432,7 +1456,7 @@ void readFromCoPro(bool eyeCatcherAlreadySeen = false)
             case PARAM_TLM_INT:
             {
               if (dir == PARAM_INC) {
-                incTLMrate();
+                incTLMrate(); // did this change get communicated to the RX? Or did it only wwork if set before connection?
               } else {
                 decTLMrate();
               }
@@ -1614,7 +1638,12 @@ void setup()
   // init the display
   #ifdef USE_TFT
   tft.init();
-  tft.setRotation(2);
+  tft.setRotation(3);
+  tft.fillScreen(TFT_BLUE);
+  // tft.fillScreen(TFT_BLUE);
+  tft.setCursor(0, 0, 2);
+  tft.setTextColor(TFT_WHITE);
+  tft.print("Hello");
   #endif
 
   #ifdef USE_IO_COPRO
@@ -1699,7 +1728,7 @@ void setup()
   POWERMGNT.init();
   Radio.currFreq = GetInitialFreq(); //set frequency first or an error will occur!!!
 
-  delay(100); // small delay to give the copro and radio moduletime to startup
+  delay(100); // small delay to give the copro and radio module time to startup
 
   bool result = EEPROM.begin(64);
   Serial.print("begin returned "); Serial.println(result);
@@ -1725,7 +1754,38 @@ void setup()
   }
 
 
-  Radio.Begin();
+  // Radio.Begin(); XXX commented out for test
+
+  #ifdef USE_ADC_COPRO
+
+  // TESTING setup SPI for ADC co-processor
+  #define SPI_CLK_SPEED 20000000
+
+  SPI.begin(GPIO_PIN_SCK, GPIO_PIN_MISO, GPIO_PIN_MOSI, -1); // sck, miso, mosi, ss (ss can be any GPIO)
+  SPI.setFrequency(SPI_CLK_SPEED);
+
+  SPISettings settings(SPI_CLK_SPEED, SPI_MSBFIRST, SPI_MODE0);
+
+  SPI.beginTransaction(settings);
+
+  pinMode(GPIO_PIN_ADCCP_SS, OUTPUT);
+  digitalWrite(GPIO_PIN_ADCCP_SS, HIGH); // SS is active low, so high is 'not selected'
+
+  #else // not useing COPRO for ADC, so setup local ADC
+
+  // setup the ADC channels:
+  initADC();
+
+  // start a task to read the gimbals
+  #ifdef USE_DMA_ADC
+  xTaskCreatePinnedToCore(readGimbalsViaDMA_task, "DMA_ADCsTask", 3000, NULL, 20, &readGimbalsDMATaskHandle, 1);
+  #else
+  xTaskCreatePinnedToCore(readADCsTask, "readADCsTask", 3000, NULL, 20, &readADCsTaskHandle, 1);
+  #endif
+
+  #endif // USE_ADC_COPRO
+
+
   //Radio.SetSyncWord(UID[3]);
   // POWERMGNT.setDefaultPower();
   Radio.SetOutputPower(radioPower);
@@ -1742,15 +1802,6 @@ void setup()
   // TODO rethink for co-pro
   // startupSafetyCheck();
 
-  // setup the ADC channels:
-  initADC();
-
-  // start a task to read the gimbals
-  #ifdef USE_DMA_ADC
-  xTaskCreatePinnedToCore(readGimbalsViaDMA_task, "DMA_ADCsTask", 3000, NULL, 20, &readGimbalsDMATaskHandle, 1);
-  #else
-  xTaskCreatePinnedToCore(readADCsTask, "readADCsTask", 3000, NULL, 20, &readADCsTaskHandle, 1);
-  #endif
 
   hwTimer.init();
   // hwTimer.stop(); //comment to automatically start the timer and leave it running
@@ -1762,7 +1813,7 @@ void setup()
 
 void loop()
 {
-  // static uint32_t lastDebugOutput = 0;
+  static uint32_t lastDebugOutput = 0;
   static uint32_t lastTelemSend = 0;
 
   // TODO add a timeout so we can cancel the save if something goes wrong
@@ -1854,13 +1905,22 @@ void loop()
 #endif
 
   #ifdef USE_TFT
-  if (millis() > (lastDebugOutput + 500)) {  // TODO not really debug anymore, change name
-    lastDebugOutput = millis();
+  if (now > (lastDebugOutput + 500)) {  // TODO not really debug anymore, change name
+    lastDebugOutput = now;
 
-    if (lcdNeedsRedraw) {
-      redrawDisplay();
-      lcdNeedsRedraw = false;
+    tft.setTextColor(TFT_WHITE, TFT_BLUE);
+
+    for(int i=0; i<4; i++) {
+      int row = i/2 * 40; int col = i%2 * TFT_HEIGHT/2;
+      tft.setCursor(col, row, 4);
+      tft.print(crsf.ChannelDataIn[i]);
+      tft.print("  ");
     }
+
+    // if (lcdNeedsRedraw) {
+    //   redrawDisplay();
+    //   lcdNeedsRedraw = false;
+    // }
 
     // Serial.print("rssi "); Serial.print((int8_t)crsf.LinkStatistics.uplink_RSSI_1);
     // Serial.print(" SNR "); Serial.print(crsf.LinkStatistics.uplink_SNR);
@@ -1868,77 +1928,79 @@ void loop()
     // Serial.print(" telem received "); Serial.print(telemReceived);
     // Serial.print(" telem lost "); Serial.println(telemExpected - telemReceived);
 
-    tft.setCursor(0, 100, 2);
-    tft.setTextColor(TFT_WHITE, TFT_BLUE);
+    // tft.setCursor(0, 100, 2);
+    // tft.setTextColor(TFT_WHITE, TFT_BLUE);
 
-    tft.print("RSSI ");
-    tft.setTextFont(4);
-    if (isRXconnected) {
-      tft.printf("%3d \n", (int8_t)crsf.LinkStatistics.uplink_RSSI_1);
-    } else {
-      tft.println(" --    ");
-    }
+    // tft.print("RSSI ");
+    // tft.setTextFont(4);
+    // if (isRXconnected) {
+    //   tft.printf("%3d \n", (int8_t)crsf.LinkStatistics.uplink_RSSI_1);
+    // } else {
+    //   tft.println(" --    ");
+    // }
 
-    tft.setTextFont(2);
-    tft.print("SNR  ");
-    tft.setTextFont(4);
-    if (isRXconnected) {
-      tft.printf("%3d \n", crsf.LinkStatistics.uplink_SNR);
-    } else {
-      tft.println(" --    ");
-    }
+    // tft.setTextFont(2);
+    // tft.print("SNR  ");
+    // tft.setTextFont(4);
+    // if (isRXconnected) {
+    //   tft.printf("%3d \n", crsf.LinkStatistics.uplink_SNR);
+    // } else {
+    //   tft.println(" --    ");
+    // }
 
-    tft.setTextFont(2);
-    tft.print("LQ   ");
-    tft.setTextFont(4);
-    if (isRXconnected) {
-      tft.printf("%3d  \n", crsf.LinkStatistics.uplink_Link_quality);
-     } else {
-      tft.println(" --    ");
-    }
+    // tft.setTextFont(2);
+    // tft.print("LQ   ");
+    // tft.setTextFont(4);
+    // if (isRXconnected) {
+    //   tft.printf("%3d  \n", crsf.LinkStatistics.uplink_Link_quality);
+    //  } else {
+    //   tft.println(" --    ");
+    // }
 
     // if armEndTime isn't set then show a running timer, otherwise show the elapsed last armed time
-    char *pstr;
-    char buffer[16];
-    if (armStartTime == 0) {
-      // tft.println("    00:00  ");
-      pstr = (char*)"00:00"; // promise not to overwrite the constant
-    } else {
-      pstr = buffer;
-      unsigned long eTime = (armEndTime == 0) ? millis() : armEndTime;
-      unsigned int armTime = (eTime - armStartTime) / 1000;
-      unsigned int minutes = armTime / 60;
-      unsigned int seconds = armTime % 60;
-      sprintf(pstr, "%02d:%02d", minutes, seconds);
-    }
+    // char *pstr;
+    // char buffer[16];
+    // if (armStartTime == 0) {
+    //   // tft.println("    00:00  ");
+    //   pstr = (char*)"00:00"; // promise not to overwrite the constant
+    // } else {
+    //   pstr = buffer;
+    //   unsigned long eTime = (armEndTime == 0) ? millis() : armEndTime;
+    //   unsigned int armTime = (eTime - armStartTime) / 1000;
+    //   unsigned int minutes = armTime / 60;
+    //   unsigned int seconds = armTime % 60;
+    //   sprintf(pstr, "%02d:%02d", minutes, seconds);
+    // }
 
-    tft.setTextDatum(TC_DATUM);
-    tft.drawString(pstr, TFT_WIDTH/2, 185);
+    // tft.setTextDatum(TC_DATUM);
+    // tft.drawString(pstr, TFT_WIDTH/2, 185);
 
-    tft.setTextDatum(TL_DATUM);
-    tft.setCursor(0,220,4);
+    // tft.setTextDatum(TL_DATUM);
+    // tft.setCursor(0,220,4);
 
-    #define BAT_OVERSAMPLE 4
-    int batRaw = 0;
-    for(int i=0; i<BAT_OVERSAMPLE; i++) {
-      int sample;
-      adc2_get_raw(ADC2_CHANNEL_4, ADC_WIDTH_BIT_12, &sample);
-      batRaw += sample;
-    }
-    batRaw = LPF_battery.update(batRaw/BAT_OVERSAMPLE);
+    // #define BAT_OVERSAMPLE 4
+    // int batRaw = 0;
+    // for(int i=0; i<BAT_OVERSAMPLE; i++) {
+    //   int sample;
+    //   adc2_get_raw(ADC2_CHANNEL_4, ADC_WIDTH_BIT_12, &sample);
+    //   batRaw += sample;
+    // }
+    // batRaw = LPF_battery.update(batRaw/BAT_OVERSAMPLE);
 
-    // scale must match width and atten
-    const float scale = 7.885 / 4095; // (resistor divider factor * max atten voltage * fudgefactor) / max_reading
-    float vBat = (float) batRaw * scale;
+    // // scale must match width and atten
+    // const float scale = 7.885 / 4095; // (resistor divider factor * max atten voltage * fudgefactor) / max_reading
+    // float vBat = (float) batRaw * scale;
 
-    tft.printf("%2.2fV", vBat);
+    // tft.printf("%2.2fV", vBat);
 
-    tft.setTextFont(1);
-    sprintf(buffer, "cpu: %2d%%", cpuLoad);
-    tft.setTextDatum(BR_DATUM);
-    tft.drawString(buffer, TFT_WIDTH, TFT_HEIGHT);
+    // char buffer[16];
 
-    tft.setTextDatum(TL_DATUM);
+    // tft.setTextFont(1);
+    // sprintf(buffer, "cpu: %2d%%", cpuLoad);
+    // tft.setTextDatum(BR_DATUM);
+    // tft.drawString(buffer, TFT_WIDTH, TFT_HEIGHT);
+
+    // tft.setTextDatum(TL_DATUM);
 
     // int a1 = digitalRead(GPIO_AUX1);
     // int a2 = digitalRead(GPIO_AUX2);
@@ -2059,6 +2121,8 @@ void ICACHE_RAM_ATTR TimerCallbackISR()
   //   Serial.print(" cpu ");   Serial.println(cpuLoad);
   // }
 
+  #ifndef USE_ADC_COPRO
+
   #ifndef USE_DMA_ADC
   // notify the ADC task to read the gimbal data
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -2068,6 +2132,8 @@ void ICACHE_RAM_ATTR TimerCallbackISR()
   // tLeaveISR = micros();
   portYIELD_FROM_ISR();
   #endif // USE_DMA_ADC
+
+  #endif // USE_ADC_COPRO
 }
 
 

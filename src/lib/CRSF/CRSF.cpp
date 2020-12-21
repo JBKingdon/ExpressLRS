@@ -3,7 +3,7 @@
 #include "../../lib/FIFO/FIFO.h"
 #include "HardwareSerial.h"
 
-//#define DEBUG_CRSF_NO_OUTPUT // debug, don't send RC msgs over UART
+// #define DEBUG_CRSF_NO_OUTPUT // debug, don't send RC msgs over UART
 
 #ifdef PLATFORM_ESP32
 #ifndef USE_IO_COPRO
@@ -91,6 +91,10 @@ volatile uint32_t CRSF::RequestedRCpacketInterval = 5000; // default to 200hz as
 void CRSF::Begin()
 {
     Serial.println("About to start CRSF task...");
+
+    #ifdef DEBUG_CRSF_NO_OUTPUT
+    Serial.println("WARNING Output suppressed in CRSF.cpp!!");
+    #endif
 
 #if defined(PLATFORM_ESP32) && !defined(USE_IO_COPRO)
     mutexOutFIFO = xSemaphoreCreateMutex();

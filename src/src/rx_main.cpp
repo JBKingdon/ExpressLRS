@@ -38,7 +38,7 @@ SX1280Driver Radio;
 #define SEND_LINK_STATS_TO_FC_INTERVAL 50
 ///////////////////
 
-#define DEBUG_SUPPRESS // supresses debug messages on uart
+// #define DEBUG_SUPPRESS // supresses debug messages on uart
 
 hwTimer hwTimer;
 
@@ -65,6 +65,9 @@ uint32_t ConsiderConnGoodMillis = 1000; // minimum time before we can consider a
 bool lowRateMode = false;
 
 bool LED = false;
+
+// debug counters
+uint32_t rxCount=0, crcErrorCount=0;
 
 //// Variables Relating to Button behaviour ////
 bool buttonPrevValue = true; //default pullup
@@ -93,7 +96,7 @@ uint32_t doneProcessing;
 uint32_t ModuleBootTime = 0;
 uint32_t LastValidPacketMicros = 0;
 uint32_t LastValidPacketPrevMicros = 0; //Previous to the last valid packet (used to measure the packet interval)
-uint32_t LastValidPacket = 0;           //Time the last valid packet was recv
+unsigned long LastValidPacket = 0;           //Time the last valid packet was recv
 uint32_t LastSyncPacket = 0;            //Time the last valid packet was recv
 
 uint32_t SendLinkStatstoFCintervalLastSent = 0;
@@ -113,7 +116,7 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
     int8_t LastRSSI = Radio.GetLastPacketRSSI();
 
     #ifndef USE_ELRS_CRSF_EXTENSIONS
-    crsf.PackedRCdataOut.ch15 = UINT10_to_CRSF(map(LastRSSI, -100, -50, 0, 1023));
+    crsf.PackedRCdataOut.ch15 = UINT10_to_CRSF(map(constrain(LastRSSI, -100, -50), -100, -50, 0, 1023));
     crsf.PackedRCdataOut.ch14 = UINT10_to_CRSF(fmap(linkQuality, 0, 100, 0, 1023));
     #endif
 
@@ -129,14 +132,12 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
     crsf.LinkStatistics.rf_Mode = RATE_MAX - ExpressLRS_currAirRate_Modparams->index;
 
     #else
-    #error "old stuff"
+    // #error "old stuff" // if only I could remember why I put this here
     crsf.LinkStatistics.uplink_RSSI_1 = -1 * rssiDBM; // to match BF
-
     crsf.LinkStatistics.uplink_RSSI_2 = 0;
     crsf.LinkStatistics.uplink_SNR = Radio.LastPacketSNR; // * 10;
     crsf.LinkStatistics.uplink_Link_quality = linkQuality;
     crsf.LinkStatistics.rf_Mode = RATE_MAX - ExpressLRS_currAirRate_Modparams->index;
-    //Serial.println(crsf.LinkStatistics.uplink_RSSI_1);
     #endif
 }
 
@@ -174,6 +175,8 @@ void ICACHE_RAM_ATTR HandleFHSS()
 
     alreadyFHSS = true;
     Radio.SetFrequency(FHSSgetNextFreq());
+
+    // Serial.println("hop");
 
     if (ExpressLRS_currAirRate_Modparams->TLMinterval == TLM_RATIO_NO_TLM)
     {
@@ -424,8 +427,13 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
     uint8_t type = Radio.RXdataBuffer[0] & 0b11;
     uint8_t packetAddr = (Radio.RXdataBuffer[0] & 0b11111100) >> 2;
 
+    // Serial.println("packet!");
+
     if (inCRC != calculatedCRC)
     {
+        // Serial.println("CRC error");
+        crcErrorCount++;
+
         #ifndef DEBUG_SUPPRESS
         Serial.print("CRC error on RF packet: ");
         for (int i = 0; i < 8; i++)
@@ -491,8 +499,14 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
             if ((ExpressLRS_currAirRate_Modparams->index != rateIn) || (ExpressLRS_currAirRate_Modparams->TLMinterval != (expresslrs_tlm_ratio_e)TLMrateIn))
             { // change link parameters if required
                 #ifndef DEBUG_SUPPRESS
-                Serial.println("New TLMrate: ");
-                Serial.println(TLMrateIn);
+                if (ExpressLRS_currAirRate_Modparams->TLMinterval != (expresslrs_tlm_ratio_e)TLMrateIn) {
+                    Serial.print("New TLMrate: ");
+                    Serial.println(TLMrateIn);
+                }
+                if (ExpressLRS_currAirRate_Modparams->index != rateIn) {
+                    Serial.print("New air-rate: ");
+                    Serial.println(rateIn);
+                }
                 #endif
                 ExpressLRS_AirRateNeedsUpdate = true;
                 ExpressLRS_currAirRate_Modparams = get_elrs_airRateConfig((expresslrs_RFrates_e)rateIn);
@@ -501,6 +515,14 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
 
             if (NonceRX != Radio.RXdataBuffer[2] || FHSSgetCurrIndex() != Radio.RXdataBuffer[1])
             {
+                #ifndef DEBUG_SUPPRESS
+                if (NonceRX != Radio.RXdataBuffer[2]) {
+                    Serial.println("nonce mismatch");
+                }
+                if (FHSSgetCurrIndex() != Radio.RXdataBuffer[1]) {
+                    Serial.println("FHSS mismatch");
+                }
+                #endif
                 FHSSsetCurrIndex(Radio.RXdataBuffer[1]);
                 NonceRX = Radio.RXdataBuffer[2];
                 TentativeConnection();
@@ -510,7 +532,7 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
         }
         break;
 
-    default: // code to be executed if n doesn't match any cases
+    default:
         break;
     }
 
@@ -606,6 +628,7 @@ void sampleButton()
 
 void ICACHE_RAM_ATTR RXdoneISR()
 {
+    rxCount++;
     ProcessRFPacket();
     //Serial.println("r");
 
@@ -667,9 +690,16 @@ void setup()
     //Radio.RFmodule = RFMOD_SX1278; //define radio module here
 #endif
 
-    // Serial.begin(230400); // for linux debugging
-    // Serial.begin(420000); // normal crsf baud rate
+    #ifndef DEBUG_SUPPRESS
+    // Serial.begin(230400); // for linux debugging with dodgy uart adapters?
+    Serial.begin(460800); // for linux debugging for normal adapters
+    #else
+    #ifdef USE_ELRS_CRSF_EXTENSIONS
     Serial.begin(691200);   // JBK extended crsf impl. Needs modified BF build to match
+    #else
+    Serial.begin(420000); // normal crsf baud rate
+    #endif // USE_ELRS_CRSF_EXTENSIONS
+    #endif // DEBUG_SUPPRESS
 
     FHSSrandomiseFHSSsequence();
 
@@ -702,6 +732,31 @@ void setup()
 
 void loop()
 {
+    static uint32_t lastDebug = 0;
+
+    #ifndef DEBUG_SUPPRESS
+    if ((connectionState != disconnected) && millis() > (lastDebug + 1000)) {
+        // Serial.println(linkQuality);
+        Serial.print(crcErrorCount);
+        Serial.print("/");
+        Serial.print(rxCount);
+        Serial.print(" ");
+        crcErrorCount = 0;
+        rxCount = 0;
+
+        // Serial.print(-crsf.LinkStatistics.rssi);
+        // Serial.print("dBm ");
+        // Serial.print(RawOffset);
+        // Serial.print(":");
+        // Serial.print(Offset);
+        // Serial.print(":");
+        // Serial.print(OffsetDx);
+        // Serial.print(":");
+        Serial.println(linkQuality);
+        lastDebug = millis();
+    }
+    #endif // DEBUG_SUPPRESS
+
     //crsf.RXhandleUARTout(); //empty the UART out buffer
     //yield(); // to be safe
     //Serial.println(linkQuality);
@@ -731,11 +786,15 @@ void loop()
 #endif
 
     if (connectionState == tentative && (linkQuality <= 75 || abs(OffsetDx) > 10 || Offset > 100) && 
-                            (millis() > (LastSyncPacket + ExpressLRS_currAirRate_RFperfParams->RFmodeCycleAddtionalTime)))
+            ((millis() - LastSyncPacket) > ExpressLRS_currAirRate_RFperfParams->RFmodeCycleAddtionalTime))
     {
         LostConnection();
         #ifndef DEBUG_SUPPRESS
-        Serial.println("Bad sync, aborting");
+        Serial.print("Bad sync, aborting");
+        if (linkQuality <= 75) Serial.print(" LQ");
+        if (abs(OffsetDx) > 10) Serial.print(" oDx");
+        if (Offset > 100) Serial.print(" offset");
+        Serial.println();
         #endif
         Radio.SetFrequency(GetInitialFreq());
         Radio.RXnb();
@@ -758,27 +817,45 @@ void loop()
     //     }
     // }
 
-    if (millis() > (RFmodeLastCycled + ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval)) // connection = tentative we add alittle delay
-    {
-        if ((connectionState == disconnected) && !webUpdateMode)
-        {
-            LastSyncPacket = millis();                                        // reset this variable
-            SetRFLinkRate((expresslrs_RFrates_e)(scanIndex % CURR_RATE_MAX)); //switch between rates
-            Radio.RXnb();
-            LQreset();
-            digitalWrite(GPIO_PIN_LED, LED);
-            LED = !LED;
+    unsigned long now = millis();
 
-            #ifndef DEBUG_SUPPRESS
-            Serial.println(ExpressLRS_currAirRate_Modparams->interval);
-            #endif
-            
-            scanIndex++;
-        }
-        RFmodeLastCycled = millis();
+    // is it time to try a different packet rate for getting a connection?
+    if ((connectionState == disconnected) && 
+        !webUpdateMode &&
+        ((now - RFmodeLastCycled) > (ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval/2))) //  RFmodeCycleInterval divisor to test faster searching 
+    {
+        LastSyncPacket = now;                                        // reset this variable
+        SetRFLinkRate((expresslrs_RFrates_e)(scanIndex % CURR_RATE_MAX)); //switch between rates
+        Radio.RXnb();
+        LQreset();
+        digitalWrite(GPIO_PIN_LED, LED);
+        LED = !LED;
+
+        #ifndef DEBUG_SUPPRESS
+        Serial.println(ExpressLRS_currAirRate_Modparams->interval);
+        #endif
+        
+        scanIndex++;
+        RFmodeLastCycled = now;
     }
 
-    if ((millis() > (LastValidPacket + ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval)) || ((millis() > (LastSyncPacket + 11000)) && linkQuality < 10)) // check if we lost conn.
+    // check if we lost conn
+    const unsigned long localLVP = LastValidPacket; // make absolutely certain that the isr can't update this after we read millis() below
+    // old version
+    // if ((connectionState == connected) && 
+    //     ((now > (LastValidPacket + ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval)) || ((millis() > (LastSyncPacket + 11000)) && linkQuality < 10))
+    //     )
+
+    // With the first timeout rewritten in Peho format
+    // if ((connectionState == connected) && 
+    //     (((millis() - localLVP) > ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval) || ((millis() > (LastSyncPacket + 11000)) && linkQuality < 10))
+    //     )
+
+    // don't use the cached value of millis() here, if a packet is received after the value of millis() was saved in 'now',
+    // LastValidPacket gets updated to a value that's later than the cached millis, the arithemetic wraps and we get a false failsafe
+    if ((connectionState == connected) && ((millis() - localLVP) > ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval)
+        //  || (((now - LastSyncPacket) > 11000) && linkQuality < 10) // this doesn't seem safe with noSyncWhenArmed
+        )
     {
         LostConnection();
     }
@@ -796,7 +873,7 @@ void loop()
     //     SendLinkStatstoFCintervalLastSent = millis();
     // }
 
-    if (millis() > (buttonLastSampled + BUTTON_SAMPLE_INTERVAL))
+    if ((millis() - buttonLastSampled) > BUTTON_SAMPLE_INTERVAL)
     {
         sampleButton();
         buttonLastSampled = millis();

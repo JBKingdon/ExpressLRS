@@ -5,7 +5,7 @@
 
 // expresslrs packet header types
 // 00 -> standard 4 channel data packet
-// 01 -> switch data packet
+// 01 -> msp data packet
 // 11 -> tlm packet
 // 10 -> sync packet with hop data
 #define RC_DATA_PACKET 0b00

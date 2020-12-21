@@ -15,7 +15,7 @@
 #define DefaultPowerEnum 2
 #endif
 
-#ifdef TARGET_TX_DAG_V1
+#if defined(TARGET_TX_DAG_V1) || defined(TARGET_TX_DAG_V3)
 // not actually used yet, but need something to keep the compiler happy
 #define MaxPower 1
 #define DefaultPowerEnum 1
