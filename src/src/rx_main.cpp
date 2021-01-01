@@ -35,10 +35,22 @@ SX1280Driver Radio;
 #define WEB_UPDATE_PRESS_INTERVAL 2000 // hold button for 2 sec to enable webupdate mode
 #define BUTTON_RESET_INTERVAL 4000     //hold button for 4 sec to reboot RX
 #define WEB_UPDATE_LED_FLASH_INTERVAL 25
-#define SEND_LINK_STATS_TO_FC_INTERVAL 50
+#define SEND_LINK_STATS_TO_FC_INTERVAL 50    // normal rate
+// #define SEND_LINK_STATS_TO_FC_INTERVAL 5    // hires debug rate
 ///////////////////
 
-// #define DEBUG_SUPPRESS // supresses debug messages on uart
+#define DEBUG_SUPPRESS // supresses debug messages on uart
+
+// #define DIVERSITY_DEV_MODE // couples the diversity mode to AUX4
+
+#define ANTENNA_SWITCH GPIO_PIN_BUTTON
+
+
+uint8_t antenna = 0;        // currently active antenna
+DiversityModes_e divMode = DIV_RSSI;
+int8_t lastPacketRSSI[2];   // last RSSI for a successful packet on each antenna
+
+// int8_t lastRXrssi=0;
 
 hwTimer hwTimer;
 
@@ -48,7 +60,8 @@ CRSF crsf(Serial); //pass a serial port object to the class for it to use
 LPF LPF_PacketInterval(3);
 LPF LPF_Offset(2);
 LPF LPF_OffsetDx(4);
-LPF LPF_UplinkRSSI(5);
+LPF LPF_UplinkRSSI0(5);
+LPF LPF_UplinkRSSI1(5);
 ////////////////////////////
 
 uint8_t scanIndex = RATE_DEFAULT;
@@ -111,30 +124,72 @@ uint32_t PacketInterval;
 uint32_t RFmodeLastCycled = 0;
 ///////////////////////////////////////
 
+// flip to the other antenna
+// no-op if ANTENNA_SWITCH not defined
+void ICACHE_RAM_ATTR switchAntenna()
+{
+    #ifdef ANTENNA_SWITCH
+
+    antenna = !antenna;
+    digitalWrite(ANTENNA_SWITCH, antenna);
+
+    #endif
+}
+
+// use the specified antenna
+// no-op if ANTENNA_SWITCH not defined
+// void ICACHE_RAM_ATTR setAntenna(uint8_t x)
+// {
+//     #ifdef ANTENNA_SWITCH
+
+//     // EARLY RETURN for invalid input, or if there is no change to the existing setting
+//     if (x > 1 || antenna == x) return;
+
+//     antenna = x;
+//     digitalWrite(ANTENNA_SWITCH, antenna);
+
+//     #endif
+// }
+
+
 void ICACHE_RAM_ATTR getRFlinkInfo()
 {
-    int8_t LastRSSI = Radio.GetLastPacketRSSI();
+    int8_t lastRSSI = Radio.GetLastPacketRSSI();
+
+    lastPacketRSSI[antenna] = lastRSSI; // save the value for use by the diversity code in SX1280_hal.cpp
+
+    int32_t rssiDBM0 = LPF_UplinkRSSI0.SmoothDataINT;
+    int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
+    switch (antenna) {
+        case 0:
+            rssiDBM0 = LPF_UplinkRSSI0.update(lastRSSI);
+            break;
+        case 1:
+            rssiDBM1 = LPF_UplinkRSSI1.update(lastRSSI);
+            break;
+    }
 
     #ifndef USE_ELRS_CRSF_EXTENSIONS
     crsf.PackedRCdataOut.ch15 = UINT10_to_CRSF(map(constrain(LastRSSI, -100, -50), -100, -50, 0, 1023));
     crsf.PackedRCdataOut.ch14 = UINT10_to_CRSF(fmap(linkQuality, 0, 100, 0, 1023));
     #endif
 
-    int32_t rssiDBM = LPF_UplinkRSSI.update(Radio.LastPacketRSSI);
-    // our rssiDBM is currently in the range -128 to 98, but BF wants a value in the range
+    // rssiDBM on sx1276 is currently in the range -128 to 98, but BF wants a value in the range
     // 0 to 255 that maps to -1 * the negative part of the rssiDBM, so cap at 0.
-    if (rssiDBM > 0)
-        rssiDBM = 0;
+    // rssiDBM on sx1280 runs -127 to 0 anyway, but this won't hurt
+    if (rssiDBM0 > 0) rssiDBM0 = 0;
+    if (rssiDBM1 > 0) rssiDBM1 = 0;
     #ifdef USE_ELRS_CRSF_EXTENSIONS
-    crsf.LinkStatistics.rssi = -1 * rssiDBM; // to match BF
-    crsf.LinkStatistics.snr = Radio.LastPacketSNR; // * 10;
-    crsf.LinkStatistics.link_quality = linkQuality;
+    crsf.LinkStatistics.rssi0 = -rssiDBM0; // negate to match BF
+    crsf.LinkStatistics.rssi1 = -rssiDBM1;
+    // crsf.LinkStatistics.snr = Radio.LastPacketSNR; // * 10; Swapped out snr for rssi1
+    crsf.LinkStatistics.link_quality = linkQuality | (antenna << 7); // carry the current antenna info in the top bit of lq
     crsf.LinkStatistics.rf_Mode = RATE_MAX - ExpressLRS_currAirRate_Modparams->index;
 
     #else
     // #error "old stuff" // if only I could remember why I put this here
-    crsf.LinkStatistics.uplink_RSSI_1 = -1 * rssiDBM; // to match BF
-    crsf.LinkStatistics.uplink_RSSI_2 = 0;
+    crsf.LinkStatistics.uplink_RSSI_1 = -rssiDBM0; // to match BF
+    crsf.LinkStatistics.uplink_RSSI_2 = -rssiDBM1;
     crsf.LinkStatistics.uplink_SNR = Radio.LastPacketSNR; // * 10;
     crsf.LinkStatistics.uplink_Link_quality = linkQuality;
     crsf.LinkStatistics.rf_Mode = RATE_MAX - ExpressLRS_currAirRate_Modparams->index;
@@ -169,7 +224,6 @@ void ICACHE_RAM_ATTR HandleFHSS()
 
     if ((modresult != 0) || (connectionState == disconnected)) // don't hop if disconnected
     {
-        
         return;
     }
 
@@ -178,15 +232,12 @@ void ICACHE_RAM_ATTR HandleFHSS()
 
     // Serial.println("hop");
 
-    if (ExpressLRS_currAirRate_Modparams->TLMinterval == TLM_RATIO_NO_TLM)
+     // Start another RX unless we're about to send telem
+    if ((ExpressLRS_currAirRate_Modparams->TLMinterval == TLM_RATIO_NO_TLM) || 
+        (((NonceRX + 1) % (TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval))) != 0)
+        )
     {
         Radio.RXnb();
-        return;
-    }
-    else if (((NonceRX + 1) % (TLMratioEnumToValue(ExpressLRS_currAirRate_Modparams->TLMinterval))) != 0) // if we aren't about to send a response don't go back into RX mode
-    {
-        Radio.RXnb();
-        return;
     }
 }
 
@@ -213,7 +264,7 @@ void ICACHE_RAM_ATTR HandleSendTelemetryResponse()
     // OpenTX treats the rssi values as signed.
 
     #ifdef USE_ELRS_CRSF_EXTENSIONS
-    uint8_t openTxRSSI = crsf.LinkStatistics.rssi;
+    uint8_t openTxRSSI = antenna ? crsf.LinkStatistics.rssi1 : crsf.LinkStatistics.rssi0;
     // truncate the range to fit into OpenTX's 8 bit signed value
     if (openTxRSSI > 127)
         openTxRSSI = 127;
@@ -222,8 +273,8 @@ void ICACHE_RAM_ATTR HandleSendTelemetryResponse()
     Radio.TXdataBuffer[2] = openTxRSSI;
 
     Radio.TXdataBuffer[3] = (crsf.TLMbattSensor.voltage & 0xFF00) >> 8;
-    Radio.TXdataBuffer[4] = crsf.LinkStatistics.snr;
-    Radio.TXdataBuffer[5] = crsf.LinkStatistics.link_quality;
+    // Radio.TXdataBuffer[4] = crsf.LinkStatistics.snr; // todo get the snr from somewhere else
+    Radio.TXdataBuffer[5] = crsf.LinkStatistics.link_quality & 0x7F; // mask out the active antenna bit
 
     #else
     uint8_t openTxRSSI = crsf.LinkStatistics.uplink_RSSI_1;
@@ -295,7 +346,46 @@ void ICACHE_RAM_ATTR HWtimerCallbackTick() // this is 180 out of phase with the 
 
 void ICACHE_RAM_ATTR HWtimerCallbackTock()
 {
-    HandleFHSS();
+    #ifdef DIVERSITY_DEV_MODE
+
+    static int32_t prevRSSI;        // saved rssi so that we can compare if switching made things better or worse
+    static bool antennaSwitched = false;
+
+    // diversity mode controlled by aux4 for debugging crsf.PackedRCdataOut.aux4
+    switch (divMode)
+    {
+        case DIV_DROPPED:
+            if (!packetReceivedForPreviousFrame()) {
+                // We didn't get a packet so switch the antenna
+                prevRSSI = (antenna == 0) ? LPF_UplinkRSSI0.SmoothDataINT : LPF_UplinkRSSI1.SmoothDataINT;
+                switchAntenna();
+                antennaSwitched = true;
+            } else if (antennaSwitched) {
+                // We switched last time, so check the rssi didn't get worse
+                // XXX switching on smoothed rssi may not be useful. Use the lastPacketRSSI values instead?
+                int32_t rssi = (antenna == 0) ? LPF_UplinkRSSI0.SmoothDataINT : LPF_UplinkRSSI1.SmoothDataINT;
+                if (rssi < prevRSSI) {
+                    // things got worse when we switched, change back
+                    switchAntenna();
+                    prevRSSI = rssi;
+                } else {
+                    // all good, we can stay on the current antenna, so clear the flag
+                    antennaSwitched = false;
+                }
+            }
+            break;
+        case DIV_NONE: // switching is turned off
+            // setAntenna(0);
+            break;
+        case DIV_RSSI: // code is spread between RXdoneISR and SX1280_hal.cpp:doISR
+            // TODO try moving the antenna switch to here instead of RXdoneISR
+            break;
+        default:
+            break;
+    }
+    #endif // DIVERSITY_DEV_MODE
+
+    HandleFHSS();   // may (will usually) call rxnb to start the next receive
     HandleSendTelemetryResponse();
 }
 
@@ -470,8 +560,27 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
         #else
         UnpackChannelData_11bit();
         #endif
-        if (connectionState == connected)
+
+        if (connectionState == connected) {
             crsf.sendRCFrameToFC();
+        }
+
+        #ifdef DIVERSITY_DEV_MODE
+        // development: map aux4 to divMode for diversity testing
+        switch (crsf.PackedRCdataOut.aux4)
+        {
+            case 0:
+                divMode = DIV_RSSI;   // rssi by default
+                break;
+            case 1:
+                divMode = DIV_NONE; // middle position to disable diversity
+                break;
+            default:
+                divMode = DIV_DROPPED;
+                break;
+        }
+        #endif // DIVERSITY_DEV_MODE
+
         break;
 
     case MSP_DATA_PACKET:
@@ -565,15 +674,16 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
     }
     #endif
     doneProcessing = micros();
-#ifndef DEBUG_SUPPRESS
-    Serial.print(RawOffset);
-    Serial.print(":");
-    Serial.print(Offset);
-    Serial.print(":");
-    Serial.print(OffsetDx);
-    Serial.print(":");
-    Serial.println(linkQuality);
-#endif
+
+// #ifndef DEBUG_SUPPRESS
+//     Serial.print(RawOffset);
+//     Serial.print(":");
+//     Serial.print(Offset);
+//     Serial.print(":");
+//     Serial.print(OffsetDx);
+//     Serial.print(":");
+//     Serial.println(linkQuality);
+// #endif
 }
 
 #ifdef USE_WEBSERVER
@@ -590,6 +700,11 @@ void beginWebsever()
 
 void sampleButton()
 {
+    // if gpio 0 is being used for the antenna switch then we can't read the button
+    #ifdef ANTENNA_SWITCH
+    return;
+    #endif
+
     bool buttonValue = digitalRead(GPIO_PIN_BUTTON);
 
     if (buttonValue == false && buttonPrevValue == true)
@@ -635,12 +750,20 @@ void ICACHE_RAM_ATTR RXdoneISR()
     // send link stats here so that it can never collide with the uart use in ProcessRFPacket.
     // If we're doing telemetry then processRFPacket didn't send any uart traffic, so it's an
     // ideal time to send linkstats.
+    // Can we tell if we just got a sync packet - that's also a good time to send stats
     if (connectionState != disconnected && 
-        (alreadyTLMresp || (millis() > (SendLinkStatstoFCintervalLastSent + SEND_LINK_STATS_TO_FC_INTERVAL)))
-        )
+        (alreadyTLMresp || ((millis() - SendLinkStatstoFCintervalLastSent) > SEND_LINK_STATS_TO_FC_INTERVAL))
+       )
     {
         crsf.sendLinkStatisticsToFC();
         SendLinkStatstoFCintervalLastSent = millis();
+    }
+
+    // TODO Is this the right place to do this? What about dropped packets? Try moving to Tock()
+    // prep for the next packet by switching antenna. sx1280 hal will get rssi inst at the beginning
+    // of the next packet and switch the antenna back if we made things worse
+    if (divMode == DIV_RSSI) {
+        switchAntenna();
     }
 }
 
@@ -674,7 +797,14 @@ void setup()
 #ifdef PLATFORM_STM32
     pinMode(GPIO_PIN_LED_GREEN, OUTPUT);
 #endif
+
+
+#ifdef ANTENNA_SWITCH
+    pinMode(GPIO_PIN_BUTTON, OUTPUT);
+    digitalWrite(ANTENNA_SWITCH, antenna);
+#else
     pinMode(GPIO_PIN_BUTTON, INPUT);
+#endif
 
 #ifdef Regulatory_Domain_AU_915
     Serial.println("Setting 915MHz Mode");
@@ -689,6 +819,8 @@ void setup()
     Serial.println("Setting 433MHz Mode");
     //Radio.RFmodule = RFMOD_SX1278; //define radio module here
 #endif
+
+    // Serial.begin(460800); // XXX for linux debugging for normal adapters
 
     #ifndef DEBUG_SUPPRESS
     // Serial.begin(230400); // for linux debugging with dodgy uart adapters?
@@ -732,9 +864,9 @@ void setup()
 
 void loop()
 {
+    #ifndef DEBUG_SUPPRESS
     static uint32_t lastDebug = 0;
 
-    #ifndef DEBUG_SUPPRESS
     if ((connectionState != disconnected) && millis() > (lastDebug + 1000)) {
         // Serial.println(linkQuality);
         Serial.print(crcErrorCount);
@@ -744,6 +876,15 @@ void loop()
         crcErrorCount = 0;
         rxCount = 0;
 
+        // Serial.print("rssi0 "); Serial.print(rssiDebug[0]);
+        // Serial.print(" rssi1 "); Serial.print(rssiDebug[1]);
+
+        int32_t rssiDBM0 = LPF_UplinkRSSI0.SmoothDataINT;
+        int32_t rssiDBM1 = LPF_UplinkRSSI1.SmoothDataINT;
+
+        Serial.print(" filt "); Serial.print(rssiDBM0);
+        Serial.print(" "); Serial.print(rssiDBM1);
+
         // Serial.print(-crsf.LinkStatistics.rssi);
         // Serial.print("dBm ");
         // Serial.print(RawOffset);
@@ -752,6 +893,7 @@ void loop()
         // Serial.print(":");
         // Serial.print(OffsetDx);
         // Serial.print(":");
+        Serial.print(" LQ ");
         Serial.println(linkQuality);
         lastDebug = millis();
     }

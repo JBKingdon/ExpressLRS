@@ -52,7 +52,9 @@ public:
     void SetSpiSpeed(uint32_t spiSpeed);
     void reset();
 
-    void ICACHE_RAM_ATTR WriteCommand(SX1280_RadioCommands_t opcode, uint8_t *buffer, uint8_t size);
+    // void ICACHE_RAM_ATTR WriteCommand(SX1280_RadioCommands_t opcode, uint8_t *buffer, uint8_t size);
+    void ICACHE_RAM_ATTR fastWriteCommand(uint8_t *buffer, uint8_t size);
+
     void ICACHE_RAM_ATTR WriteCommand(SX1280_RadioCommands_t command, uint8_t val);
     void ICACHE_RAM_ATTR WriteRegister(uint16_t address, uint8_t *buffer, uint8_t size);
     void ICACHE_RAM_ATTR WriteRegister(uint16_t address, uint8_t value);
@@ -66,8 +68,8 @@ public:
 
     static void ICACHE_RAM_ATTR nullCallback(void);
     
-    void ICACHE_RAM_ATTR WaitOnBusy();
-    static ICACHE_RAM_ATTR void dioISR();
+    static void ICACHE_RAM_ATTR WaitOnBusy();
+    static void ICACHE_RAM_ATTR dioISR();
     
     void ICACHE_RAM_ATTR TXenable();
     void ICACHE_RAM_ATTR RXenable();

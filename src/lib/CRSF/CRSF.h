@@ -288,13 +288,13 @@ typedef struct crsfPayloadLinkstatistics_s crsfLinkStatistics_t;
 
 typedef struct elrsPayloadLinkstatistics_s
 {
-    uint8_t rssi;
-    uint8_t link_quality;
-    int8_t  snr;
-    uint8_t rf_Mode;
+    uint8_t rssi0, rssi1;
+    uint8_t link_quality; // range 0-100 (todo, cap at 99), use the top bit to indicate which antenna is being used
+    // int8_t  snr;
+    uint8_t rf_Mode;    // hmm, modes typically only go 0 to 7 or so. Lots of spare bits in here
 } elrsLinkStatistics_t;
 
-typedef struct crsfPayloadLinkstatistics_s crsfLinkStatistics_t;
+// typedef struct crsfPayloadLinkstatistics_s crsfLinkStatistics_t;
 
 
 // typedef struct crsfOpenTXsyncFrame_s

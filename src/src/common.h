@@ -17,6 +17,12 @@ extern uint8_t UID[6];
 extern uint8_t CRCCaesarCipher;
 extern uint8_t DeviceAddr;
 
+typedef enum {
+    DIV_NONE,   // no antenna switching
+    DIV_DROPPED,// switch after dropped packet
+    DIV_RSSI    // switch based on RSSI
+} DiversityModes_e;
+
 typedef enum
 {
     TLM_RATIO_NO_TLM = 0,

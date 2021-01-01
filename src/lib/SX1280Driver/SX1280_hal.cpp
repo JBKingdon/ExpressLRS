@@ -19,6 +19,8 @@ Modified and adapted by Alessandro Carcione for ELRS project
 #include "SX1280_Regs.h"
 #include "SX1280_hal.h"
 #include <SPI.h>
+#include "../../src/LowPassFilter.h"
+#include "../../src/common.h"
 
 SX1280Hal *SX1280Hal::instance = NULL;
 
@@ -118,7 +120,7 @@ void SX1280Hal::init()
 
 void ICACHE_RAM_ATTR SX1280Hal::reset(void)
 {
-    Serial.println("SX1280 Reset");
+    // Serial.println("SX1280 Reset");
     delay(50);
     digitalWrite(GPIO_PIN_RST, LOW);
     delay(50);
@@ -136,7 +138,7 @@ void ICACHE_RAM_ATTR SX1280Hal::reset(void)
     }
 
     //this->BusyState = SX1280_NOT_BUSY;
-    Serial.println("SX1280 Ready!");
+    // Serial.println("SX1280 Ready!");
 }
 
 void ICACHE_RAM_ATTR SX1280Hal::WriteCommand(SX1280_RadioCommands_t command, uint8_t val)
@@ -150,18 +152,40 @@ void ICACHE_RAM_ATTR SX1280Hal::WriteCommand(SX1280_RadioCommands_t command, uin
     digitalWrite(GPIO_PIN_NSS, HIGH);
 }
 
-void ICACHE_RAM_ATTR SX1280Hal::WriteCommand(SX1280_RadioCommands_t command, uint8_t *buffer, uint8_t size)
+// void ICACHE_RAM_ATTR SX1280Hal::WriteCommand(SX1280_RadioCommands_t command, uint8_t *buffer, uint8_t size)
+// {
+//     WORD_ALIGNED_ATTR uint8_t OutBuffer[size + 1];
+
+//     OutBuffer[0] = (uint8_t)command;
+//     memcpy(OutBuffer + 1, buffer, size);
+
+//     WaitOnBusy();
+//     digitalWrite(GPIO_PIN_NSS, LOW);
+//     SPI.transfer(OutBuffer, (uint8_t)sizeof(OutBuffer));
+//     digitalWrite(GPIO_PIN_NSS, HIGH);
+// }
+
+// TODO don't need both fastWrite and fastRead. Remove 1
+void ICACHE_RAM_ATTR SX1280Hal::fastWriteCommand(uint8_t *buffer, uint8_t size)
 {
-    WORD_ALIGNED_ATTR uint8_t OutBuffer[size + 1];
-
-    OutBuffer[0] = (uint8_t)command;
-    memcpy(OutBuffer + 1, buffer, size);
-
     WaitOnBusy();
     digitalWrite(GPIO_PIN_NSS, LOW);
-    SPI.transfer(OutBuffer, (uint8_t)sizeof(OutBuffer));
+    SPI.transfer(buffer, size);
     digitalWrite(GPIO_PIN_NSS, HIGH);
 }
+
+
+void ICACHE_RAM_ATTR fastReadCommand(uint8_t *buffer, uint8_t size)
+{
+    SX1280Hal::WaitOnBusy();
+    digitalWrite(GPIO_PIN_NSS, LOW);
+
+    SPI.transfer(buffer, size);
+
+    digitalWrite(GPIO_PIN_NSS, HIGH);
+}
+
+
 
 void ICACHE_RAM_ATTR SX1280Hal::ReadCommand(SX1280_RadioCommands_t command, uint8_t *buffer, uint8_t size)
 {
@@ -305,8 +329,86 @@ void ICACHE_RAM_ATTR SX1280Hal::WaitOnBusy()
     }
 }
 
+// defined in rx_main.cpp
+void switchAntenna();
+extern int8_t lastPacketRSSI[2];
+
+extern uint8_t antenna;
+extern DiversityModes_e divMode;
+
+extern LPF LPF_UplinkRSSI0;
+extern LPF LPF_UplinkRSSI1;
+
 void ICACHE_RAM_ATTR SX1280Hal::dioISR()
 {
+    uint32_t initAlias; // allows 1 cycle 0 init of 4 bytes and ensures the buffer is word aligned
+    uint8_t *buffer = (uint8_t*)&initAlias;
+
+    // unsigned long t0 = micros();
+
+    initAlias = 0;
+    buffer[0] = SX1280_RADIO_GET_IRQSTATUS;
+
+    fastReadCommand(buffer, 4);
+    uint16_t irqStatus = (((uint16_t)buffer[2]) << 8) + buffer[3];
+
+    if (irqStatus & SX1280_IRQ_PREAMBLE_DETECTED) 
+    {
+        // lastPacketRSSI is saved after packet rx and the antenna is switched (in rx_main)
+        // then all we do here is get rssi inst, compare to last rssi and flip if worse
+
+        // Serial.println("Preamble detected");
+        irqStatus &= ~SX1280_IRQ_PREAMBLE_DETECTED; // clear the bit
+
+        // get rssi
+        initAlias = 0;
+        buffer[0] = SX1280_RADIO_GET_RSSIINST;
+        fastReadCommand(buffer, 3);
+        int8_t rssiNow = -(int8_t)(buffer[2]/2); // need to match lastRXrssi. TODO keep both in the native format
+
+        // XXX how long can we keep basing the choice on lastPacketRSSI if we're dropping packets? Does it need a decay term?
+        uint otherAntenna = !antenna; // abusing the logical not operator to get the 'other' antenna from the currently active one
+        if ((divMode == DIV_RSSI) && (rssiNow < lastPacketRSSI[otherAntenna]))
+        {
+            // switch antenna - we want to do this as early as possible to minimize the impact on the radio
+            switchAntenna();
+
+            // record the data from the antenna we were on before the switch
+            if (antenna == 0) {
+                // we've already called switchAntenna, so rssiNow is for the oposite one compared to the test above
+                LPF_UplinkRSSI1.update(rssiNow);
+            } else {
+                LPF_UplinkRSSI0.update(rssiNow);
+            }
+        }
+
+        // unsigned long t1 = micros();
+
+        // Serial.print(lastRXrssi);
+        // Serial.print(" ");
+        // Serial.print(rssiNow);
+
+        // Serial.print("antenna "); Serial.print(antenna);
+        // Serial.print(" rssi0 "); Serial.print(LPF_UplinkRSSI0.SmoothDataINT);
+        // Serial.print(" rssi1 "); Serial.print(LPF_UplinkRSSI1.SmoothDataINT);
+
+        // Serial.println();
+
+        // Serial.print(" ");
+        // Serial.println(t1-t0);
+    }
+
+    if (irqStatus == 0) {
+        // no tx or rx done bits set, so we can clear the irqs and return
+        buffer[0] = SX1280_RADIO_CLR_IRQSTATUS;
+        buffer[1] = 0xFF;
+        buffer[2] = 0xFF;
+
+        instance->fastWriteCommand(buffer, 3);
+
+        return;
+    }
+
     if (instance->InterruptAssignment == SX1280_INTERRUPT_RX_DONE)
     {
         //Serial.println("HalRXdone");
