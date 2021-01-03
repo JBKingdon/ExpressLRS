@@ -29,7 +29,9 @@ extern SX1280Driver Radio;
 
 expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
     // enum_rate,       bw,                 sf,                 cr,            interval, TLMinterval, FHSShopInterval, PreambleLen
-    {0, RATE_1KHZ,  SX1280_LORA_BW_1600, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_5, 1000,  TLM_RATIO_1_128,     8,          12},   // 1000Hz
+    // {0, RATE_1KHZ,  SX1280_LORA_BW_1600, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_5, 1000,  TLM_RATIO_1_128,     8,          12},   // 1000Hz (CR_LI_4_6 was unstable). 675us 225us spare
+
+    {0, RATE_1KHZ,  SX1280_LORA_BW_1600, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_7, 1150,  TLM_RATIO_1_128,     8,          12},   // 871us
 
     // {1, RATE_800HZ, SX1280_LORA_BW_1600, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_6, 1250,  TLM_RATIO_1_128,     8,          12},   //  800Hz
     // {2, RATE_500HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF5, SX1280_LORA_CR_4_5,    2000,  TLM_RATIO_1_128,     8,          12},
@@ -37,8 +39,13 @@ expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
     // {4, RATE_150HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF7, SX1280_LORA_CR_LI_4_7, 7692,  TLM_RATIO_1_32,      4,          12},  // 130Hz
     // {5, RATE_50HZ,  SX1280_LORA_BW_0800, SX1280_LORA_SF8, SX1280_LORA_CR_LI_4_7,13333,  TLM_RATIO_1_32,      2,          12}}; //  75Hz
 
-    {1, RATE_500HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF5, SX1280_LORA_CR_4_5,    2000,  TLM_RATIO_1_128,     8,          12},
-    {2, RATE_250HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF6, SX1280_LORA_CR_LI_4_7, 4000,  TLM_RATIO_1_64,      8,          12},
+    // {1, RATE_500HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF5, SX1280_LORA_CR_4_5,    2000,  TLM_RATIO_1_128,     8,          12}, // 1626 us, 274us spare
+    {1, RATE_500HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_7,    2100,  TLM_RATIO_1_128,     8,          12}, // 476Hz, 1744 us, 83%
+
+    // Getting rxfail on indoor test quad, even though this is quicker than CR_4_5
+    // {1, RATE_500HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_6, 2000,  TLM_RATIO_1_128,     8,          12},
+
+    {2, RATE_250HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF6, SX1280_LORA_CR_LI_4_7, 4000,  TLM_RATIO_1_64,      8,          12},   // 3172 us, 828us spare
     {3, RATE_150HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF7, SX1280_LORA_CR_LI_4_7, 7692,  TLM_RATIO_1_32,      4,          12},  // 130Hz
     {4, RATE_50HZ,  SX1280_LORA_BW_0800, SX1280_LORA_SF8, SX1280_LORA_CR_LI_4_7,13333,  TLM_RATIO_1_32,      2,          12}}; //  75Hz
 
@@ -51,8 +58,8 @@ expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
     //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected
 
     // long rx cycle times
-    {0, RATE_1KHZ,   -99,  675, 1000,               1000,                       100,                       5000}, // no hw crc
-    {1, RATE_500HZ, -105, 1626, 1000,               1000,                       100,                       5000},
+    {0, RATE_1KHZ,   -99,  753, 1000,               1000,                       100,                       5000},   // no hw crc
+    {1, RATE_500HZ, -105, 1626, 1000,               1000,                       100,                       5000},   // TODO update the TOA for LI_4_7
     {2, RATE_250HZ, -108, 3567, 1000,               1000,                       100,                       5000},
     {3, RATE_150HZ, -112, 6660, 1000,               4000,                       100,                       5000},   // todo, see if the large RFmodeCycleAddtionalTime can be reduced
     {4, RATE_50HZ,  -120,12059, 1000,               6000,                       133,                       5000}};
