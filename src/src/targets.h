@@ -209,6 +209,7 @@ https://github.com/jaxxzer
 #define GPIO_PIN_RCSIGNAL_TX -1
 #define GPIO_PIN_LED 16
 #define GPIO_PIN_BUTTON 0
+#define ANTENNA_SWITCH GPIO_PIN_BUTTON   // enables diversity when defined
 #define timerOffset -1
 #define MAX_PRE_PA_POWER     13
 #endif

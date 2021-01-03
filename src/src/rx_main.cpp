@@ -41,10 +41,13 @@ SX1280Driver Radio;
 
 #define DEBUG_SUPPRESS // supresses debug messages on uart
 
+// #define BAUDRATE 460800 // for targetted debug output
+
 // #define DIVERSITY_DEV_MODE // couples the diversity mode to AUX4
 
-#define ANTENNA_SWITCH GPIO_PIN_BUTTON
+#define DIVERSITY_FLIP_IN_TOCK    // move the post rx antenna flip to tock() so that happens even when a packet is dropped
 
+// NB ANTENNA_SWITCH define moved to targets.h
 
 uint8_t antenna = 0;        // currently active antenna
 DiversityModes_e divMode = DIV_RSSI;
@@ -181,7 +184,11 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
     if (rssiDBM1 > 0) rssiDBM1 = 0;
     #ifdef USE_ELRS_CRSF_EXTENSIONS
     crsf.LinkStatistics.rssi0 = -rssiDBM0; // negate to match BF
+    #ifdef ANTENNA_SWITCH
     crsf.LinkStatistics.rssi1 = -rssiDBM1;
+    #else
+    crsf.LinkStatistics.rssi1 = 255;    // special value that we can use in BF to suppress the diversity rssi display
+    #endif
     // crsf.LinkStatistics.snr = Radio.LastPacketSNR; // * 10; Swapped out snr for rssi1
     crsf.LinkStatistics.link_quality = linkQuality | (antenna << 7); // carry the current antenna info in the top bit of lq
     crsf.LinkStatistics.rf_Mode = RATE_MAX - ExpressLRS_currAirRate_Modparams->index;
@@ -378,12 +385,16 @@ void ICACHE_RAM_ATTR HWtimerCallbackTock()
             // setAntenna(0);
             break;
         case DIV_RSSI: // code is spread between RXdoneISR and SX1280_hal.cpp:doISR
-            // TODO try moving the antenna switch to here instead of RXdoneISR
             break;
         default:
             break;
     }
-    #endif // DIVERSITY_DEV_MODE
+
+    #elif defined(DIVERSITY_FLIP_IN_TOCK)
+
+    switchAntenna();
+    
+    #endif // DIVERSITY_DEV_MODE/DIVERSITY_FLIP_IN_TOCK
 
     HandleFHSS();   // may (will usually) call rxnb to start the next receive
     HandleSendTelemetryResponse();
@@ -762,9 +773,11 @@ void ICACHE_RAM_ATTR RXdoneISR()
     // TODO Is this the right place to do this? What about dropped packets? Try moving to Tock()
     // prep for the next packet by switching antenna. sx1280 hal will get rssi inst at the beginning
     // of the next packet and switch the antenna back if we made things worse
+    #ifndef DIVERSITY_FLIP_IN_TOCK
     if (divMode == DIV_RSSI) {
         switchAntenna();
     }
+    #endif
 }
 
 void ICACHE_RAM_ATTR TXdoneISR()
@@ -820,8 +833,9 @@ void setup()
     //Radio.RFmodule = RFMOD_SX1278; //define radio module here
 #endif
 
-    // Serial.begin(460800); // XXX for linux debugging for normal adapters
-
+    #ifdef BAUDRATE
+    Serial.begin(BAUDRATE); // if set, override all the other stuff
+    #else
     #ifndef DEBUG_SUPPRESS
     // Serial.begin(230400); // for linux debugging with dodgy uart adapters?
     Serial.begin(460800); // for linux debugging for normal adapters
@@ -832,6 +846,7 @@ void setup()
     Serial.begin(420000); // normal crsf baud rate
     #endif // USE_ELRS_CRSF_EXTENSIONS
     #endif // DEBUG_SUPPRESS
+    #endif // BAUDRATE
 
     FHSSrandomiseFHSSsequence();
 
@@ -982,7 +997,6 @@ void loop()
     }
 
     // check if we lost conn
-    const unsigned long localLVP = LastValidPacket; // make absolutely certain that the isr can't update this after we read millis() below
     // old version
     // if ((connectionState == connected) && 
     //     ((now > (LastValidPacket + ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval)) || ((millis() > (LastSyncPacket + 11000)) && linkQuality < 10))
@@ -995,25 +1009,20 @@ void loop()
 
     // don't use the cached value of millis() here, if a packet is received after the value of millis() was saved in 'now',
     // LastValidPacket gets updated to a value that's later than the cached millis, the arithemetic wraps and we get a false failsafe
-    if ((connectionState == connected) && ((millis() - localLVP) > ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval)
+    // The casts to signed should cope with lastValidPacket being after millis(), but I'm keeping the local var anyway.
+    const unsigned long localLVP = LastValidPacket; // make absolutely certain that the isr can't update this after we read millis() below
+    if ((connectionState == connected) && ((int32_t)(millis() - localLVP) > (int32_t)ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval)
+    // if ((connectionState == connected) && ((int32_t)(millis() - LastValidPacket) > ExpressLRS_currAirRate_RFperfParams->RFmodeCycleInterval) 
         //  || (((now - LastSyncPacket) > 11000) && linkQuality < 10) // this doesn't seem safe with noSyncWhenArmed
         )
     {
         LostConnection();
     }
 
-    if ((connectionState == tentative) && linkQuality >= 99) // quicker way to get to good conn state of the sync and link is great off the bat. 
+    if ((connectionState == tentative) && linkQuality >= 95) // quicker way to get to good conn state of the sync and link is great off the bat. 
     {
         GotConnection();
     }
-
-    // XXX TODO Testing - not sure we have enough time to send link stats with 1kHz RC
-    // TODO Move this so that it happens when we get sync packets and send telem packets
-    // if ((millis() > (SendLinkStatstoFCintervalLastSent + SEND_LINK_STATS_TO_FC_INTERVAL)) && connectionState != disconnected)
-    // {
-    //     crsf.sendLinkStatisticsToFC();
-    //     SendLinkStatstoFCintervalLastSent = millis();
-    // }
 
     if ((millis() - buttonLastSampled) > BUTTON_SAMPLE_INTERVAL)
     {

@@ -1,6 +1,7 @@
 #include "SX1280_Regs.h"
 #include "SX1280_hal.h"
 #include "SX1280.h"
+#include "../../src/targets.h"
 
 SX1280Hal hal;
 /////////////////////////////////////////////////////////////////
@@ -77,8 +78,15 @@ void SX1280Driver::Begin()
     #endif
     this->SetFrequency(this->currFreq); //Step 3: Set Freq
     this->SetFIFOaddr(0x00, 0x00);      //Step 4: Config FIFO addr
-    // XXX JBK testing - can we use preamable detected irq?
-    this->SetDioIrqParams(SX1280_IRQ_RADIO_ALL, SX1280_IRQ_TX_DONE | SX1280_IRQ_RX_DONE | SX1280_IRQ_PREAMBLE_DETECTED, SX1280_IRQ_RADIO_NONE, SX1280_IRQ_RADIO_NONE); //
+    
+    uint16_t interrupts = SX1280_IRQ_TX_DONE | SX1280_IRQ_RX_DONE;
+
+    // enable diversity support?
+    #ifdef ANTENNA_SWITCH
+    interrupts |= SX1280_IRQ_PREAMBLE_DETECTED;
+    #endif
+
+    this->SetDioIrqParams(SX1280_IRQ_RADIO_ALL, interrupts, SX1280_IRQ_RADIO_NONE, SX1280_IRQ_RADIO_NONE);
 }
 
 void ICACHE_RAM_ATTR SX1280Driver::Config(SX1280_RadioLoRaBandwidths_t bw, SX1280_RadioLoRaSpreadingFactors_t sf, SX1280_RadioLoRaCodingRates_t cr, uint32_t freq, uint8_t PreambleLength)
@@ -120,7 +128,7 @@ void ICACHE_RAM_ATTR SX1280Driver::SetOutputPower(int8_t power)
     buf[0] = SX1280_RADIO_SET_TXPARAMS;
     buf[1] = power + 18;
     buf[2] = (uint8_t)SX1280_RADIO_RAMP_04_US;
-    hal.fastWriteCommand(buf, 3);
+    hal.fastCommand(buf, 3);
 
     currPWR = power;
 
@@ -142,7 +150,7 @@ void SX1280Driver::SetPacketParams(uint8_t PreambleLength, SX1280_RadioLoRaPacke
     buf[6] = 0x00;
     buf[7] = 0x00;
 
-    hal.fastWriteCommand(buf, 8);
+    hal.fastCommand(buf, 8);
 }
 
 void SX1280Driver::SetMode(SX1280_RadioOperatingModes_t OPmode)
@@ -181,7 +189,7 @@ void SX1280Driver::SetMode(SX1280_RadioOperatingModes_t OPmode)
         buf[1] = 0x00; // periodBase = 1ms, page 71 datasheet, set to FF for cont RX
         buf[2] = 0xFF;
         buf[3] = 0xFF;
-        hal.fastWriteCommand(buf, 4);
+        hal.fastCommand(buf, 4);
         break;
 
     case SX1280_MODE_TX:
@@ -190,7 +198,7 @@ void SX1280Driver::SetMode(SX1280_RadioOperatingModes_t OPmode)
         buf[1] = 0x00; // periodBase = 1ms, page 71 datasheet
         buf[2] = 0xFF; // no timeout set for now
         buf[3] = 0xFF; // TODO dynamic timeout based on expected onairtime
-        hal.fastWriteCommand(buf, 4);
+        hal.fastCommand(buf, 4);
         break;
 
     case SX1280_MODE_CAD:
@@ -222,7 +230,7 @@ void SX1280Driver::ConfigModParams(SX1280_RadioLoRaBandwidths_t bw, SX1280_Radio
     rfparams[2] = (uint8_t)bw;
     rfparams[3] = (uint8_t)cr;
 
-    hal.fastWriteCommand(rfparams, 4);
+    hal.fastCommand(rfparams, 4);
 
     /**
      * If the Spreading Factor selected is SF5 or SF6, it is required to use WriteRegister( 0x925, 0x1E )
@@ -258,7 +266,7 @@ void SX1280Driver::SetFrequency(uint32_t Reqfreq)
     buf[2] = (uint8_t)((freq >> 8) & 0xFF);
     buf[3] = (uint8_t)(freq & 0xFF);
 
-    hal.fastWriteCommand(buf, 4);
+    hal.fastCommand(buf, 4);
     currFreq = Reqfreq;
 }
 
@@ -286,7 +294,7 @@ void SX1280Driver::SetFIFOaddr(uint8_t txBaseAddr, uint8_t rxBaseAddr)
     buf[0] = SX1280_RADIO_SET_BUFFERBASEADDRESS;
     buf[1] = txBaseAddr;
     buf[2] = rxBaseAddr;
-    hal.fastWriteCommand(buf, 3);
+    hal.fastCommand(buf, 3);
 }
 
 void SX1280Driver::SetDioIrqParams(uint16_t irqMask, uint16_t dio1Mask, uint16_t dio2Mask, uint16_t dio3Mask)
@@ -303,7 +311,7 @@ void SX1280Driver::SetDioIrqParams(uint16_t irqMask, uint16_t dio1Mask, uint16_t
     buf[7] = (uint8_t)((dio3Mask >> 8) & 0x00FF);
     buf[8] = (uint8_t)(dio3Mask & 0x00FF);
 
-    hal.fastWriteCommand(buf, 9);
+    hal.fastCommand(buf, 9);
 }
 
 void SX1280Driver::ClearIrqStatus(uint16_t irqMask)
@@ -314,7 +322,7 @@ void SX1280Driver::ClearIrqStatus(uint16_t irqMask)
     buf[1] = (uint8_t)(((uint16_t)irqMask >> 8) & 0x00FF);
     buf[2] = (uint8_t)((uint16_t)irqMask & 0x00FF);
 
-    hal.fastWriteCommand(buf, 3);
+    hal.fastCommand(buf, 3);
 }
 
 void SX1280Driver::TXnbISR()

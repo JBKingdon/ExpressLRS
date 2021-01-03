@@ -143,13 +143,21 @@ void ICACHE_RAM_ATTR SX1280Hal::reset(void)
 
 void ICACHE_RAM_ATTR SX1280Hal::WriteCommand(SX1280_RadioCommands_t command, uint8_t val)
 {
-    WaitOnBusy();
-    digitalWrite(GPIO_PIN_NSS, LOW);
+    int32_t initAlias;
+    uint8_t *buffer = (uint8_t *)&initAlias;
 
-    SPI.transfer((uint8_t)command);
-    SPI.transfer(val);
+    buffer[0] = (uint8_t)command;
+    buffer[1] = val;
 
-    digitalWrite(GPIO_PIN_NSS, HIGH);
+    fastCommand(buffer, 2);
+
+    // WaitOnBusy();
+    // digitalWrite(GPIO_PIN_NSS, LOW);
+
+    // SPI.transfer((uint8_t)command);
+    // SPI.transfer(val);
+
+    // digitalWrite(GPIO_PIN_NSS, HIGH);
 }
 
 // void ICACHE_RAM_ATTR SX1280Hal::WriteCommand(SX1280_RadioCommands_t command, uint8_t *buffer, uint8_t size)
@@ -165,8 +173,8 @@ void ICACHE_RAM_ATTR SX1280Hal::WriteCommand(SX1280_RadioCommands_t command, uin
 //     digitalWrite(GPIO_PIN_NSS, HIGH);
 // }
 
-// TODO don't need both fastWrite and fastRead. Remove 1
-void ICACHE_RAM_ATTR SX1280Hal::fastWriteCommand(uint8_t *buffer, uint8_t size)
+
+void ICACHE_RAM_ATTR SX1280Hal::fastCommand(uint8_t *buffer, uint8_t size)
 {
     WaitOnBusy();
     digitalWrite(GPIO_PIN_NSS, LOW);
@@ -174,16 +182,23 @@ void ICACHE_RAM_ATTR SX1280Hal::fastWriteCommand(uint8_t *buffer, uint8_t size)
     digitalWrite(GPIO_PIN_NSS, HIGH);
 }
 
+// void ICACHE_RAM_ATTR SX1280Hal::fastWriteCommand(uint8_t *buffer, uint8_t size)
+// {
+//     WaitOnBusy();
+//     digitalWrite(GPIO_PIN_NSS, LOW);
+//     SPI.transfer(buffer, size);
+//     digitalWrite(GPIO_PIN_NSS, HIGH);
+// }
 
-void ICACHE_RAM_ATTR fastReadCommand(uint8_t *buffer, uint8_t size)
-{
-    SX1280Hal::WaitOnBusy();
-    digitalWrite(GPIO_PIN_NSS, LOW);
+// void ICACHE_RAM_ATTR fastReadCommand(uint8_t *buffer, uint8_t size)
+// {
+//     SX1280Hal::WaitOnBusy();
+//     digitalWrite(GPIO_PIN_NSS, LOW);
 
-    SPI.transfer(buffer, size);
+//     SPI.transfer(buffer, size);
 
-    digitalWrite(GPIO_PIN_NSS, HIGH);
-}
+//     digitalWrite(GPIO_PIN_NSS, HIGH);
+// }
 
 
 
@@ -247,7 +262,7 @@ void ICACHE_RAM_ATTR SX1280Hal::ReadRegister(uint16_t address, uint8_t *buffer, 
     WaitOnBusy();
     digitalWrite(GPIO_PIN_NSS, LOW);
 
-    memcpy(OutBuffer + 4, buffer, size);
+    memcpy(OutBuffer + 4, buffer, size);    // why is this needed?
     SPI.transfer(OutBuffer, uint8_t(sizeof(OutBuffer)));
     memcpy(buffer, OutBuffer + 4, size);
 
@@ -261,6 +276,7 @@ uint8_t ICACHE_RAM_ATTR SX1280Hal::ReadRegister(uint16_t address)
     return data;
 }
 
+// todo clean this up to reduce copying
 void ICACHE_RAM_ATTR SX1280Hal::WriteBuffer(uint8_t offset, volatile uint8_t *buffer, uint8_t size)
 {
     uint8_t localbuf[size];
@@ -292,7 +308,7 @@ void ICACHE_RAM_ATTR SX1280Hal::ReadBuffer(uint8_t offset, volatile uint8_t *buf
     OutBuffer[0] = SX1280_RADIO_READ_BUFFER;
     OutBuffer[1] = offset;
     OutBuffer[2] = 0x00;
-    memcpy(OutBuffer + 3, localbuf, size);
+    memcpy(OutBuffer + 3, localbuf, size);  // why?
 
     WaitOnBusy();
     digitalWrite(GPIO_PIN_NSS, LOW);
@@ -330,6 +346,7 @@ void ICACHE_RAM_ATTR SX1280Hal::WaitOnBusy()
 }
 
 // defined in rx_main.cpp
+// TODO find a better place to declare these
 void switchAntenna();
 extern int8_t lastPacketRSSI[2];
 
@@ -346,10 +363,12 @@ void ICACHE_RAM_ATTR SX1280Hal::dioISR()
 
     // unsigned long t0 = micros();
 
+    // Get the irqStatus from the sx1280 so that we can tell which interrupt fired
+    // We could avoid this if we had a dedicated dio connection for preamble detected.
     initAlias = 0;
     buffer[0] = SX1280_RADIO_GET_IRQSTATUS;
 
-    fastReadCommand(buffer, 4);
+    instance->fastCommand(buffer, 4);
     uint16_t irqStatus = (((uint16_t)buffer[2]) << 8) + buffer[3];
 
     if (irqStatus & SX1280_IRQ_PREAMBLE_DETECTED) 
@@ -363,10 +382,10 @@ void ICACHE_RAM_ATTR SX1280Hal::dioISR()
         // get rssi
         initAlias = 0;
         buffer[0] = SX1280_RADIO_GET_RSSIINST;
-        fastReadCommand(buffer, 3);
+        instance->fastCommand(buffer, 3);
         int8_t rssiNow = -(int8_t)(buffer[2]/2); // need to match lastRXrssi. TODO keep both in the native format
 
-        // XXX how long can we keep basing the choice on lastPacketRSSI if we're dropping packets? Does it need a decay term?
+        // TODO test with switching based on the LPF instead of lastPacketRSSI
         uint otherAntenna = !antenna; // abusing the logical not operator to get the 'other' antenna from the currently active one
         if ((divMode == DIV_RSSI) && (rssiNow < lastPacketRSSI[otherAntenna]))
         {
@@ -377,8 +396,10 @@ void ICACHE_RAM_ATTR SX1280Hal::dioISR()
             if (antenna == 0) {
                 // we've already called switchAntenna, so rssiNow is for the oposite one compared to the test above
                 LPF_UplinkRSSI1.update(rssiNow);
+                lastPacketRSSI[1] = rssiNow;    // prevents lastPacket data from getting very stale when we don't switch antennas for a long time
             } else {
                 LPF_UplinkRSSI0.update(rssiNow);
+                lastPacketRSSI[0] = rssiNow;
             }
         }
 
@@ -404,7 +425,7 @@ void ICACHE_RAM_ATTR SX1280Hal::dioISR()
         buffer[1] = 0xFF;
         buffer[2] = 0xFF;
 
-        instance->fastWriteCommand(buffer, 3);
+        instance->fastCommand(buffer, 3);
 
         return;
     }
