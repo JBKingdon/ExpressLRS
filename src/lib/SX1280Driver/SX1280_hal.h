@@ -71,6 +71,8 @@ public:
     
     static void ICACHE_RAM_ATTR WaitOnBusy();
     static void ICACHE_RAM_ATTR dioISR();
+    static void ICACHE_RAM_ATTR preambleISR();
+
     
     void ICACHE_RAM_ATTR TXenable();
     void ICACHE_RAM_ATTR RXenable();

@@ -197,20 +197,22 @@ https://github.com/jaxxzer
 #endif
 
 #ifdef TARGET_RX_ESP8266_SX1280_V1
-#define GPIO_PIN_NSS 15
-#define GPIO_PIN_BUSY 5
-#define GPIO_PIN_DIO0 -1 // does not exist on sx1280
-#define GPIO_PIN_DIO1 4
-#define GPIO_PIN_MOSI 13
-#define GPIO_PIN_MISO 12
-#define GPIO_PIN_SCK 14
-#define GPIO_PIN_RST 2
+#define GPIO_PIN_NSS         15
+#define GPIO_PIN_BUSY         5
+#define GPIO_PIN_DIO0        -1 // does not exist on sx1280
+#define GPIO_PIN_DIO1         4
+#define GPIO_PIN_DIO2         9
+#define GPIO_PIN_MOSI        13
+#define GPIO_PIN_MISO        12
+#define GPIO_PIN_SCK         14
+#define GPIO_PIN_RST          2
 #define GPIO_PIN_RCSIGNAL_RX -1 //only uses default uart pins so leave as -1 
 #define GPIO_PIN_RCSIGNAL_TX -1
-#define GPIO_PIN_LED 16
-#define GPIO_PIN_BUTTON 0
+#define GPIO_PIN_LED         16
+#define GPIO_PIN_BUTTON       0
 #define ANTENNA_SWITCH GPIO_PIN_BUTTON   // enables diversity when defined
-#define timerOffset -1
+#define ANTENNA_SWITCH_CMP   10
+#define timerOffset          -1
 #define MAX_PRE_PA_POWER     13
 #endif
 

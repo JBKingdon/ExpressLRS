@@ -134,7 +134,12 @@ void ICACHE_RAM_ATTR switchAntenna()
     #ifdef ANTENNA_SWITCH
 
     antenna = !antenna;
+
     digitalWrite(ANTENNA_SWITCH, antenna);
+
+    #ifdef ANTENNA_SWITCH_CMP
+    digitalWrite(ANTENNA_SWITCH_CMP, !antenna);
+    #endif
 
     #endif
 }
@@ -270,6 +275,8 @@ void ICACHE_RAM_ATTR HandleSendTelemetryResponse()
     // rssi we send is for display only.
     // OpenTX treats the rssi values as signed.
 
+    // TODO - add a elrs controller specific mode that returns both the rssi raw values
+
     #ifdef USE_ELRS_CRSF_EXTENSIONS
     uint8_t openTxRSSI = antenna ? crsf.LinkStatistics.rssi1 : crsf.LinkStatistics.rssi0;
     // truncate the range to fit into OpenTX's 8 bit signed value
@@ -278,6 +285,7 @@ void ICACHE_RAM_ATTR HandleSendTelemetryResponse()
     // convert to 8 bit signed value in the negative range (-128 to 0)
     openTxRSSI = 255 - openTxRSSI;
     Radio.TXdataBuffer[2] = openTxRSSI;
+    // Radio.TXdataBuffer[3] = add 2nd rssi here
 
     Radio.TXdataBuffer[3] = (crsf.TLMbattSensor.voltage & 0xFF00) >> 8;
     // Radio.TXdataBuffer[4] = crsf.LinkStatistics.snr; // todo get the snr from somewhere else
@@ -385,6 +393,7 @@ void ICACHE_RAM_ATTR HWtimerCallbackTock()
             // setAntenna(0);
             break;
         case DIV_RSSI: // code is spread between RXdoneISR and SX1280_hal.cpp:doISR
+            // XXX TODO this has changed for preamble rssi and this needs updating to match the DIVERSITY_FLIP_IN_TOCK block below
             break;
         default:
             break;
@@ -535,15 +544,15 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
         // Serial.println("CRC error");
         crcErrorCount++;
 
-        #ifndef DEBUG_SUPPRESS
-        Serial.print("CRC error on RF packet: ");
-        for (int i = 0; i < 8; i++)
-        {
-            Serial.print(Radio.RXdataBuffer[i], HEX);
-            Serial.print(",");
-        }
-        Serial.println("");
-        #endif
+        // #ifndef DEBUG_SUPPRESS
+        // Serial.print("CRC error on RF packet: ");
+        // for (int i = 0; i < 8; i++)
+        // {
+        //     Serial.print(Radio.RXdataBuffer[i], HEX);
+        //     Serial.print(",");
+        // }
+        // Serial.println("");
+        // #endif
         return;
     }
 
@@ -811,12 +820,17 @@ void setup()
     pinMode(GPIO_PIN_LED_GREEN, OUTPUT);
 #endif
 
-
 #ifdef ANTENNA_SWITCH
-    pinMode(GPIO_PIN_BUTTON, OUTPUT);
+    pinMode(ANTENNA_SWITCH, OUTPUT);
     digitalWrite(ANTENNA_SWITCH, antenna);
 #else
     pinMode(GPIO_PIN_BUTTON, INPUT);
+#endif
+
+// Are we using complementary control on the RF switch?
+#ifdef ANTENNA_SWITCH_CMP
+    pinMode(ANTENNA_SWITCH_CMP, OUTPUT);
+    digitalWrite(ANTENNA_SWITCH_CMP, !antenna);
 #endif
 
 #ifdef Regulatory_Domain_AU_915

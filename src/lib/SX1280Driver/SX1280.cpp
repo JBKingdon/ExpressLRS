@@ -83,10 +83,20 @@ void SX1280Driver::Begin()
 
     // enable diversity support?
     #ifdef ANTENNA_SWITCH
+    // we have diversity, so we need to add preamble detect
+    #ifdef GPIO_PIN_DIO2
+    // preamble on dedicated dio2
+    this->SetDioIrqParams(SX1280_IRQ_RADIO_ALL, interrupts, SX1280_IRQ_PREAMBLE_DETECTED, SX1280_IRQ_RADIO_NONE);
+    #else
+    // preamble merged with tx/rx done interrupts
     interrupts |= SX1280_IRQ_PREAMBLE_DETECTED;
-    #endif
-
     this->SetDioIrqParams(SX1280_IRQ_RADIO_ALL, interrupts, SX1280_IRQ_RADIO_NONE, SX1280_IRQ_RADIO_NONE);
+    #endif // GPIO_PIN_DIO2
+    #else
+    // no diversity, so no preamble detect needed
+    this->SetDioIrqParams(SX1280_IRQ_RADIO_ALL, interrupts, SX1280_IRQ_RADIO_NONE, SX1280_IRQ_RADIO_NONE);
+    #endif // ANTENNA_SWITCH
+
 }
 
 void ICACHE_RAM_ATTR SX1280Driver::Config(SX1280_RadioLoRaBandwidths_t bw, SX1280_RadioLoRaSpreadingFactors_t sf, SX1280_RadioLoRaCodingRates_t cr, uint32_t freq, uint8_t PreambleLength)

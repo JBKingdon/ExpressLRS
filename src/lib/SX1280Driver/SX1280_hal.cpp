@@ -21,6 +21,7 @@ Modified and adapted by Alessandro Carcione for ELRS project
 #include <SPI.h>
 #include "../../src/LowPassFilter.h"
 #include "../../src/common.h"
+#include "../../src/targets.h"
 
 SX1280Hal *SX1280Hal::instance = NULL;
 
@@ -45,6 +46,10 @@ void SX1280Hal::init()
     Serial.println("Hal Init");
     pinMode(GPIO_PIN_BUSY, INPUT);
     pinMode(GPIO_PIN_DIO1, INPUT);
+
+    #ifdef GPIO_PIN_DIO2
+    pinMode(GPIO_PIN_DIO2, INPUT);
+    #endif
 
     pinMode(GPIO_PIN_RST, OUTPUT);
     pinMode(GPIO_PIN_NSS, OUTPUT);
@@ -100,7 +105,8 @@ void SX1280Hal::init()
     // SPI.setFrequency(18000000);
     // SPI.setFrequency(8000000);
     Serial.println("starting SPI transaction");
-    SPISettings settings(8000000, MSBFIRST, SPI_MODE0);
+    // SPISettings settings(8000000, MSBFIRST, SPI_MODE0);
+    SPISettings settings(12000000, MSBFIRST, SPI_MODE0);
     SPI.beginTransaction(settings);
 #endif
 
@@ -116,6 +122,11 @@ void SX1280Hal::init()
 
     //attachInterrupt(digitalPinToInterrupt(GPIO_PIN_BUSY), this->busyISR, CHANGE); //not used atm
     attachInterrupt(digitalPinToInterrupt(GPIO_PIN_DIO1), this->dioISR, RISING);
+
+    // if we have a 2nd DIO, use it for diversity preamble detection
+    #ifdef GPIO_PIN_DIO2
+    attachInterrupt(digitalPinToInterrupt(GPIO_PIN_DIO2), this->preambleISR, RISING);
+    #endif
 }
 
 void ICACHE_RAM_ATTR SX1280Hal::reset(void)
@@ -356,8 +367,82 @@ extern DiversityModes_e divMode;
 extern LPF LPF_UplinkRSSI0;
 extern LPF LPF_UplinkRSSI1;
 
+#ifdef GPIO_PIN_DIO2
+/** Dedicated ISR for preamble based antenna diversity
+ *  For rx that have more than one DIO connected we can use a dedicated interrupt for diversity,
+ *  eliminating the need for an SPI command to query the interrupt status from the radio.
+ */
+void ICACHE_RAM_ATTR SX1280Hal::preambleISR()
+{
+    uint32_t initAlias; // allows 1 cycle 0 init of 4 bytes and ensures the buffer is word aligned
+    uint8_t *buffer = (uint8_t*)&initAlias;
+    // unsigned long t0 = micros();
+
+    // lastPacketRSSI is saved after packet rx and the antenna is switched (in rx_main)
+    // then all we do here is get rssi inst, compare to last rssi and flip if worse
+
+    // Serial.println("Preamble detected");
+
+    // get rssi
+    initAlias = 0;
+    buffer[0] = SX1280_RADIO_GET_RSSIINST;
+    instance->fastCommand(buffer, 3);
+    int8_t rssiNow = -(int8_t)(buffer[2]/2); // need to match lastRXrssi. TODO keep both in the native format
+
+    // TODO test with switching based on the LPF instead of lastPacketRSSI
+    uint otherAntenna = !antenna; // abusing the logical not operator to get the 'other' antenna from the currently active one
+    if ((divMode == DIV_RSSI) && (rssiNow < lastPacketRSSI[otherAntenna]))
+    {
+        // switch antenna - we want to do this as early as possible to minimize the impact on the radio
+        switchAntenna();
+
+        // record the data from the antenna we were on before the switch
+        if (antenna == 0) {
+            // we've already called switchAntenna, so rssiNow is for the oposite one compared to the test above
+            LPF_UplinkRSSI1.update(rssiNow);
+            lastPacketRSSI[1] = rssiNow;    // prevents lastPacket data from getting very stale when we don't switch antennas for a long time
+        } else {
+            LPF_UplinkRSSI0.update(rssiNow);
+            lastPacketRSSI[0] = rssiNow;
+        }
+    }
+
+    // unsigned long t1 = micros();
+
+    // Serial.print(lastRXrssi);
+    // Serial.print(" ");
+    // Serial.print(rssiNow);
+
+    // Serial.print("antenna "); Serial.print(antenna);
+    // Serial.print(" rssi0 "); Serial.print(LPF_UplinkRSSI0.SmoothDataINT);
+    // Serial.print(" rssi1 "); Serial.print(LPF_UplinkRSSI1.SmoothDataINT);
+
+
+    // Serial.print(antenna);
+    // Serial.print(" "); Serial.print(LPF_UplinkRSSI0.SmoothDataINT);
+    // Serial.print(" "); Serial.print(LPF_UplinkRSSI1.SmoothDataINT);
+
+    // Serial.println();
+
+
+    // Serial.print(" ");
+    // Serial.println(t1-t0);
+
+
+    // Need to clear the preamble detect irq SX1280_IRQ_PREAMBLE_DETECTED
+
+    buffer[0] = SX1280_RADIO_CLR_IRQSTATUS;
+    buffer[1] = (uint16_t)SX1280_IRQ_PREAMBLE_DETECTED >> 8;
+    buffer[2] = SX1280_IRQ_PREAMBLE_DETECTED & 0xFF;
+
+    instance->fastCommand(buffer, 3);
+}
+#endif // GPIO_PIN_DIO2
+
 void ICACHE_RAM_ATTR SX1280Hal::dioISR()
 {
+    #if defined(ANTENNA_SWITCH ) && !defined(GPIO_PIN_DIO2)
+
     uint32_t initAlias; // allows 1 cycle 0 init of 4 bytes and ensures the buffer is word aligned
     uint8_t *buffer = (uint8_t*)&initAlias;
 
@@ -429,6 +514,8 @@ void ICACHE_RAM_ATTR SX1280Hal::dioISR()
 
         return;
     }
+
+    #endif // ANTENNA_SWITCH && !GPIO_PIN_DIO2
 
     if (instance->InterruptAssignment == SX1280_INTERRUPT_RX_DONE)
     {
