@@ -35,7 +35,7 @@ expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
     // 1100 LQ 90 to 98
     // 1050 LQ 75 to 97
     // 1250 LQ 90 to 98
-    {1, RATE_800HZ,  SX1280_LORA_BW_1600, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_7, 1200,  TLM_RATIO_1_128,     8,          12},   // 871us
+    {1, RATE_800HZ,  SX1280_LORA_BW_1600, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_7, 1200,  TLM_RATIO_1_128,     8,          12},   // 833Hz
 
     // {1, RATE_800HZ, SX1280_LORA_BW_1600, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_6, 1250,  TLM_RATIO_1_128,     8,          12},   //  800Hz
     // {2, RATE_500HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF5, SX1280_LORA_CR_4_5,    2000,  TLM_RATIO_1_128,     8,          12},
