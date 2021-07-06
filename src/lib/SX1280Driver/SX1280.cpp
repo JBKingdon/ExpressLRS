@@ -221,11 +221,25 @@ void SX1280Driver::SetMode(SX1280_RadioOperatingModes_t OPmode)
     currOpmode = OPmode;
 }
 
+void SX1280Driver::setSensitivity(bool high)
+{
+    if (high) {
+        // Serial.println("sens high");
+        hal.WriteRegister(0x0891, (hal.ReadRegister(0x0891) | 0xC0));
+    } else {
+        // Serial.println("sens low");
+        hal.WriteRegister(0x0891, (hal.ReadRegister(0x0891) & ~0xC0));
+    }
+}
+
 /** default is low power mode, switch to high sensitivity instead
  * */
 void setHighSensitivity()
 {
-    hal.WriteRegister(0x0891, (hal.ReadRegister(0x0891) | 0xC0));
+    // Serial.print("before "); Serial.println(hal.ReadRegister(0x0891));
+    // hal.WriteRegister(0x0891, (hal.ReadRegister(0x0891) | 0xC0));
+    SX1280Driver::setSensitivity(true);
+    // Serial.print("after "); Serial.println(hal.ReadRegister(0x0891));
 }
 
 void SX1280Driver::ConfigModParams(SX1280_RadioLoRaBandwidths_t bw, SX1280_RadioLoRaSpreadingFactors_t sf, SX1280_RadioLoRaCodingRates_t cr)

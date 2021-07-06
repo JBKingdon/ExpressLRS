@@ -570,13 +570,25 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
 
     getRFlinkInfo();
 
+    // unsigned int oldAux4;
+
     switch (type)
     {
     case RC_DATA_PACKET: //Standard RC Data Packet
         #if defined SEQ_SWITCHES
         UnpackChannelDataSeqSwitches(Radio.RXdataBuffer, &crsf);
         #elif defined HYBRID_SWITCHES_8
+
+        // oldAux4 = crsf.PackedRCdataOut.aux4;
+
         UnpackChannelDataHybridSwitches8(Radio.RXdataBuffer, &crsf);
+
+        // debugging high/low sensitivity by toggling via aux4
+        // if (crsf.PackedRCdataOut.aux4 != oldAux4) {
+        //     // switch has changed
+        //     SX1280Driver::setSensitivity(crsf.PackedRCdataOut.aux4>0);
+        // }
+
         #else
         UnpackChannelData_11bit();
         #endif

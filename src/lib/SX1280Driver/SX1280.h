@@ -113,6 +113,7 @@ public:
     int8_t ICACHE_RAM_ATTR GetLastPacketSNR();
     static uint16_t ICACHE_RAM_ATTR GetIrqStatus();
 
+    static void ICACHE_RAM_ATTR setSensitivity(bool high);
 
 private:
 };
