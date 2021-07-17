@@ -31,7 +31,7 @@
 
 #ifdef USE_ELRS_CRSF_EXTENSIONS
 #define RCframeLength 7             // length of the RC data packed bytes frame. 4 x 10 bit analog + 8 x 2bit switches
-#define LinkStatisticsFrameLength 4
+#define LinkStatisticsFrameLength 5
 #else
 #define RCframeLength 22             // length of the RC data packed bytes frame. 16 channels in 11 bits each.
 #define LinkStatisticsFrameLength 10
@@ -289,9 +289,10 @@ typedef struct crsfPayloadLinkstatistics_s crsfLinkStatistics_t;
 typedef struct elrsPayloadLinkstatistics_s
 {
     uint8_t rssi0, rssi1;
-    uint8_t link_quality; // range 0-100 (todo, cap at 99), use the top bit to indicate which antenna is being used
+    uint8_t link_quality; // range 0-99, use the top bit to indicate which antenna is being used
     // int8_t  snr;
     uint8_t rf_Mode;    // hmm, modes typically only go 0 to 7 or so. Lots of spare bits in here
+    int8_t txPower;     // power in dBm
 } elrsLinkStatistics_t;
 
 // typedef struct crsfPayloadLinkstatistics_s crsfLinkStatistics_t;

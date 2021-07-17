@@ -625,7 +625,8 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
         break;
 
     case SYNC_PACKET: //sync packet from master
-        if (Radio.RXdataBuffer[4] == UID[3] && Radio.RXdataBuffer[5] == UID[4] && Radio.RXdataBuffer[6] == UID[5])
+        // if (Radio.RXdataBuffer[4] == UID[3] && Radio.RXdataBuffer[5] == UID[4] && Radio.RXdataBuffer[6] == UID[5])
+        if (Radio.RXdataBuffer[5] == UID[4] && Radio.RXdataBuffer[6] == UID[5])
         {
             LastSyncPacket = millis();
             #ifndef DEBUG_SUPPRESS
@@ -636,6 +637,10 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
 
             expresslrs_RFrates_e rateIn = (expresslrs_RFrates_e)((Radio.RXdataBuffer[3] & 0b11100000) >> 5);
             uint8_t TLMrateIn = ((Radio.RXdataBuffer[3] & 0b00011100) >> 2);
+
+            #ifdef USE_ELRS_CRSF_EXTENSIONS
+            crsf.LinkStatistics.txPower = Radio.RXdataBuffer[4];
+            #endif
 
             if ((ExpressLRS_currAirRate_Modparams->index != rateIn) || (ExpressLRS_currAirRate_Modparams->TLMinterval != (expresslrs_tlm_ratio_e)TLMrateIn))
             { // change link parameters if required
