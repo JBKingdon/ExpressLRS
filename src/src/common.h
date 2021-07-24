@@ -70,10 +70,9 @@ typedef enum
     RATE_250HZ = 3,
     RATE_200HZ = 4,
     RATE_150HZ = 5,
-    RATE_100HZ = 6,
-    RATE_50HZ = 7,
-    RATE_25HZ = 8,
-    RATE_4HZ = 9
+    RATE_125HZ = 6,
+    RATE_100HZ = 7,
+    RATE_50HZ  = 8,
 } expresslrs_RFrates_e; // Max value of 16 since only 4 bits have been assigned in the sync package.
 
 typedef struct expresslrs_rf_pref_params_s
@@ -106,11 +105,19 @@ typedef struct expresslrs_mod_settings_s
 
 } expresslrs_mod_settings_t;
 
-#endif
+#endif // REG 915 etc
+
 
 #if defined(Regulatory_Domain_ISM_2400) || defined(Regulatory_Domain_ISM_2400_NA)
+
+#ifdef USE_HIRES_DATA
+#define RATE_MAX 4  // actually the number of rates, so the max value is RATE_MAX-1
+#define RATE_DEFAULT 1
+#else
 #define RATE_MAX 6  // actually the number of rates, so the max value is RATE_MAX-1
 #define RATE_DEFAULT 2
+#endif // USE_HIRES_DATA
+
 typedef struct expresslrs_mod_settings_s
 {
     uint8_t index;
@@ -125,7 +132,8 @@ typedef struct expresslrs_mod_settings_s
 
 } expresslrs_mod_settings_t;
 
-#endif
+#endif // reg 2400
+
 
 expresslrs_mod_settings_s *get_elrs_airRateConfig(int8_t index);
 expresslrs_rf_pref_params_s *get_elrs_RFperfParams(int8_t index);

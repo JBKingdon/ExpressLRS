@@ -76,6 +76,7 @@ volatile uint8_t CRSF::ParameterUpdateData[2] = {0};
 
 #ifdef USE_ELRS_CRSF_EXTENSIONS
 volatile crsf_elrs_channels_s CRSF::PackedRCdataOut;
+volatile crsf_elrs_channels_hiRes_s CRSF::PackedHiResRCdataOut;
 volatile elrsPayloadLinkstatistics_s CRSF::LinkStatistics;
 #else
 volatile crsf_channels_s CRSF::PackedRCdataOut;
@@ -398,6 +399,31 @@ void ICACHE_RAM_ATTR CRSF::sendSyncPacketToTX(void *pvParameters) // in values i
 #endif
         }
 
+#ifdef USE_HIRES_DATA
+        void ICACHE_RAM_ATTR CRSF::sendHiResRCFrameToFC()
+        {
+            uint8_t outBuffer[RCHiResframeLength + 4] = {0};
+
+            outBuffer[0] = CRSF_ADDRESS_FLIGHT_CONTROLLER;
+            outBuffer[1] = RCHiResframeLength + 2;
+            outBuffer[2] = CRSF_FRAMETYPE_RC_ELRS_HIRES;
+
+            memcpy(outBuffer + 3, (byte *)&PackedHiResRCdataOut, RCHiResframeLength);
+
+            uint8_t crc = CalcCRC(&outBuffer[2], RCHiResframeLength + 1);
+
+            outBuffer[RCHiResframeLength + 3] = crc;
+#ifndef DEBUG_CRSF_NO_OUTPUT
+            //SerialOutFIFO.push(RCframeLength + 4);
+            //SerialOutFIFO.pushBytes(outBuffer, RCframeLength + 4);
+            this->_dev->write(outBuffer, RCHiResframeLength + 4);
+#endif
+        }
+#else
+
+#endif // USE_HIRES_DATA
+
+#ifdef NOPE
         void ICACHE_RAM_ATTR CRSF::sendMSPFrameToFC(mspPacket_t * packet)
         {
             // TODO: This currently only supports single MSP packets per cmd
@@ -431,7 +457,9 @@ void ICACHE_RAM_ATTR CRSF::sendSyncPacketToTX(void *pvParameters) // in values i
             SerialOutFIFO.pushBytes(outBuffer, totalBufferLen);
             //this->_dev->write(outBuffer, totalBufferLen);
         }
-#endif
+#endif // NOPE
+
+#endif // rx specific code
 
 #if defined(PLATFORM_ESP32) || defined(TARGET_R9M_TX) || defined(TARGET_R9M_LITE_TX)
 

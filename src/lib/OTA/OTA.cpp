@@ -156,6 +156,64 @@ void ICACHE_RAM_ATTR UnpackChannelDataHybridSwitches8(volatile uint8_t* Buffer, 
 
 #endif // HYBRID_SWITCHES_8
 
+#ifdef USE_HIRES_DATA
+
+/**
+ * HiRes channel
+ *
+ * uses 12 bits for each analog channel, range 0 - 4095
+ * 2 bits for the low latency switch[0]
+ * 3 bits for the round-robin switch index and 2 bits for the value
+ * 
+ * XXX This requires an extra byte in the OTA packet and hence new modes and timings
+ * 
+ *
+ * Input: Buffer
+ * Output: crsf->PackedRCdataOut
+ */
+void ICACHE_RAM_ATTR UnpackHiResChannelData(volatile uint8_t* Buffer, CRSF *crsf)
+{
+    // When using the elrs extensions we send in our native format and the FC will do the
+    // conversions
+
+    // const static uint32_t MAX_OUT = 1811;
+    // const static uint32_t MID_OUT =  992;
+    // const static uint32_t MIN_OUT =  172;
+
+    // The analog channels
+    crsf->PackedHiResRCdataOut.chan0 = (Buffer[1] << 4) + ((Buffer[5] & 0b11110000) >> 4); 
+    crsf->PackedHiResRCdataOut.chan1 = (Buffer[2] << 4) + ((Buffer[5] & 0b00001111));
+    crsf->PackedHiResRCdataOut.chan2 = (Buffer[3] << 4) + ((Buffer[6] & 0b11110000) >> 4);
+    crsf->PackedHiResRCdataOut.chan3 = (Buffer[4] << 4) + ((Buffer[6] & 0b00001111));
+
+    // The low latency switch
+    crsf->PackedHiResRCdataOut.aux1 = (Buffer[7] & 0b01100000) >> 5;
+
+    // The round-robin switch
+    uint8_t switchIndex = (Buffer[7] & 0b11100) >> 2;
+    uint16_t switchValue = Buffer[7] & 0b11;
+
+    switch (switchIndex) {
+        case 0:   // we should never get index 0 here since that is the low latency switch
+            Serial.println("BAD switchIndex 0");
+            break;
+        case 1:
+            crsf->PackedHiResRCdataOut.aux2 = switchValue;
+            break;
+        case 2:
+            crsf->PackedHiResRCdataOut.aux3 = switchValue;
+            break;
+        case 3:
+            crsf->PackedHiResRCdataOut.aux4 = switchValue;
+            break;
+        default: // higher numbered channels are ignored
+            break;
+    }
+
+}
+
+#endif // USE_HIRES_DATA
+
 #if defined SEQ_SWITCHES or defined UNIT_TEST
 
 /**

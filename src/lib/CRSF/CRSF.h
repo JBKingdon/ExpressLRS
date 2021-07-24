@@ -31,6 +31,7 @@
 
 #ifdef USE_ELRS_CRSF_EXTENSIONS
 #define RCframeLength 7             // length of the RC data packed bytes frame. 4 x 10 bit analog + 8 x 2bit switches
+#define RCHiResframeLength 7        // length of the RC HiRes data frame. 4 x 12 bit analog + 4 x 2bit switches
 #define LinkStatisticsFrameLength 5
 #else
 #define RCframeLength 22             // length of the RC data packed bytes frame. 16 channels in 11 bits each.
@@ -91,16 +92,16 @@ static const unsigned int VTXtable[6][8] =
 
 typedef enum
 {
-    CRSF_FRAMETYPE_GPS = 0x02,
-    CRSF_FRAMETYPE_BATTERY_SENSOR = 0x08,
+    CRSF_FRAMETYPE_GPS             = 0x02,
+    CRSF_FRAMETYPE_BATTERY_SENSOR  = 0x08,
+    CRSF_FRAMETYPE_OPENTX_SYNC     = 0x10,
     CRSF_FRAMETYPE_LINK_STATISTICS = 0x14,
     CRSF_FRAMETYPE_LINK_STATISTICS_ELRS = 0x15,
-    CRSF_FRAMETYPE_OPENTX_SYNC = 0x10,
-    CRSF_FRAMETYPE_RADIO_ID = 0x3A,
-    CRSF_FRAMETYPE_RC_CHANNELS_PACKED = 0x16,
-    CRSF_FRAMETYPE_RC_ELRS = 0x17,
-    CRSF_FRAMETYPE_ATTITUDE = 0x1E,
-    CRSF_FRAMETYPE_FLIGHT_MODE = 0x21,
+    CRSF_FRAMETYPE_RC_CHANNELS_PACKED   = 0x16,
+    CRSF_FRAMETYPE_RC_ELRS         = 0x17,
+    CRSF_FRAMETYPE_RC_ELRS_HIRES   = 0x18,
+    CRSF_FRAMETYPE_ATTITUDE        = 0x1E,
+    CRSF_FRAMETYPE_FLIGHT_MODE     = 0x21,
     // Extended Header Frames, range: 0x28 to 0x96
     CRSF_FRAMETYPE_DEVICE_PING = 0x28,
     CRSF_FRAMETYPE_DEVICE_INFO = 0x29,
@@ -108,6 +109,7 @@ typedef enum
     CRSF_FRAMETYPE_PARAMETER_READ = 0x2C,
     CRSF_FRAMETYPE_PARAMETER_WRITE = 0x2D,
     CRSF_FRAMETYPE_COMMAND = 0x32,
+    CRSF_FRAMETYPE_RADIO_ID = 0x3A,
     // MSP commands
     CRSF_FRAMETYPE_MSP_REQ = 0x7A,   // response request using msp sequence as command
     CRSF_FRAMETYPE_MSP_RESP = 0x7B,  // reply with 58 byte chunked binary
@@ -213,6 +215,19 @@ typedef struct crsf_elrs_channels_s {
     unsigned int aux7 : 2;
     unsigned int aux8 : 2;
 } PACKED crsf_elrs_channels_t;
+
+// hires packet for carrying 12 bit gimbal data
+typedef struct crsf_elrs_channels_hiRes_s {
+    // 56 bits of data (12 bits per channel * 4 channels + 2 bits per switch * 4 switches) = 7 bytes.
+    unsigned int chan0 : 12;
+    unsigned int chan1 : 12;
+    unsigned int chan2 : 12;
+    unsigned int chan3 : 12;
+    unsigned int aux1 : 2;
+    unsigned int aux2 : 2;
+    unsigned int aux3 : 2;
+    unsigned int aux4 : 2;
+} PACKED crsf_elrs_channels_hiRes_t;
 
 
 /**
@@ -423,6 +438,7 @@ public:
 
     #ifdef USE_ELRS_CRSF_EXTENSIONS
     static volatile crsf_elrs_channels_s PackedRCdataOut;
+    static volatile crsf_elrs_channels_hiRes_s PackedHiResRCdataOut;
     static volatile elrsPayloadLinkstatistics_s LinkStatistics; // Link Statisitics Stored as Struct
     #else
     static volatile crsf_channels_s PackedRCdataOut;            // RC data in packed format for output.
@@ -461,6 +477,7 @@ public:
 #endif
 
     void ICACHE_RAM_ATTR sendRCFrameToFC();
+    void ICACHE_RAM_ATTR sendHiResRCFrameToFC();
     void ICACHE_RAM_ATTR sendMSPFrameToFC(mspPacket_t* packet);
     void ICACHE_RAM_ATTR sendLinkStatisticsToFC();
     void ICACHE_RAM_ATTR sendLinkStatisticsToTX();

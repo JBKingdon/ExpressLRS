@@ -27,6 +27,28 @@ expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
 #include "SX1280Driver.h"
 extern SX1280Driver Radio;
 
+#ifdef USE_HIRES_DATA
+
+expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
+    // enum_rate,       bw,                 sf,                 cr,            interval, TLMinterval, FHSShopInterval, PreambleLen
+    {0, RATE_1KHZ,  SX1280_LORA_BW_1600, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_5, 1000,  TLM_RATIO_1_128,     8,          12}, // 714us
+    {1, RATE_500HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_6, 2000,  TLM_RATIO_1_128,     8,          12}, // 1586us, 79%
+    {2, RATE_250HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF6, SX1280_LORA_CR_LI_4_7, 4000,  TLM_RATIO_1_64,      8,          12}, // 3330us, 
+    {3, RATE_125HZ, SX1280_LORA_BW_0800, SX1280_LORA_SF7, SX1280_LORA_CR_LI_4_7, 8000,  TLM_RATIO_1_32,      4,          12}, // 
+
+};
+
+expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
+    //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected
+    {0, RATE_1KHZ,   -99,  714, 1000,               1000,                       100,                       5000},   // no hw crc
+    {1, RATE_500HZ, -105, 1586, 1000,               1000,                       100,                       5000},
+    {2, RATE_250HZ, -108, 3330, 1000,               1000,                       100,                       5000},
+    {3, RATE_125HZ, -112, 6187, 1000,               4000,                       100,                       5000},   // todo, see if the large RFmodeCycleAddtionalTime can be reduced
+
+};
+
+#else // not USE_HIRES_DATA
+
 expresslrs_mod_settings_s ExpressLRS_AirRateConfig[RATE_MAX] = {
     // enum_rate,       bw,                 sf,                 cr,            interval, TLMinterval, FHSShopInterval, PreambleLen
     {0, RATE_1KHZ,  SX1280_LORA_BW_1600, SX1280_LORA_SF5, SX1280_LORA_CR_LI_4_5, 1000,  TLM_RATIO_1_128,     8,          12},   // 1000Hz (CR_LI_4_6 was unstable). 675us 225us spare
@@ -62,15 +84,16 @@ expresslrs_rf_pref_params_s ExpressLRS_AirRateRFperf[RATE_MAX] = {
     //      rate    sens  TOA RFmodeCycleInterval RFmodeCycleAddtionalTime SyncPktIntervalDisconnected SyncPktIntervalConnected
 
     // long rx cycle times
-    {0, RATE_1KHZ,   -99,  753, 1000,               1000,                       100,                       5000},   // no hw crc
-    {1, RATE_800HZ,  -99,  753, 1000,               1000,                       100,                       5000},   // TODO needs updating
-    {2, RATE_500HZ, -105, 1626, 1000,               1000,                       100,                       5000},   // TODO update the TOA for LI_4_7
+    {0, RATE_1KHZ,   -99,  675, 1000,               1000,                       100,                       5000},   // no hw crc
+    {1, RATE_800HZ,  -99,  871, 1000,               1000,                       100,                       5000},   //
+    {2, RATE_500HZ, -105, 1744, 1000,               1000,                       100,                       5000},   //
     {3, RATE_250HZ, -108, 3567, 1000,               1000,                       100,                       5000},
     {4, RATE_150HZ, -112, 6660, 1000,               4000,                       100,                       5000},   // todo, see if the large RFmodeCycleAddtionalTime can be reduced
     {5, RATE_50HZ,  -120,12059, 1000,               6000,                       133,                       5000}};
 
+#endif // USE_HIRES_DATA
 
-#endif
+#endif // reg 2400
 
 expresslrs_mod_settings_s *get_elrs_airRateConfig(int8_t index);
 //const expresslrs_mod_settings_s * ExpressLRS_nextAirRate;

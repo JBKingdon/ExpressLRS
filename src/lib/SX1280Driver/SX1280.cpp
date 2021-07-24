@@ -2,6 +2,7 @@
 #include "SX1280_hal.h"
 #include "SX1280.h"
 #include "../../src/targets.h"
+#include "OTA.h"
 
 SX1280Hal hal;
 /////////////////////////////////////////////////////////////////
@@ -72,9 +73,9 @@ void SX1280Driver::Begin()
     this->ConfigModParams(currBW, currSF, currCR);                          //Step 5: Configure Modulation Params
     hal.WriteCommand(SX1280_RADIO_SET_AUTOFS, 0x01);                        //enable auto FS
     #ifdef USE_HARDWARE_CRC
-    this->SetPacketParams(12, SX1280_LORA_PACKET_IMPLICIT, 8, SX1280_LORA_CRC_ON, SX1280_LORA_IQ_NORMAL);
+    this->SetPacketParams(12, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1280_LORA_CRC_ON, SX1280_LORA_IQ_NORMAL);
     #else
-    this->SetPacketParams(12, SX1280_LORA_PACKET_IMPLICIT, 8, SX1280_LORA_CRC_OFF, SX1280_LORA_IQ_NORMAL);
+    this->SetPacketParams(12, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1280_LORA_CRC_OFF, SX1280_LORA_IQ_NORMAL);
     #endif
     this->SetFrequency(this->currFreq); //Step 3: Set Freq
     this->SetFIFOaddr(0x00, 0x00);      //Step 4: Config FIFO addr
@@ -99,14 +100,15 @@ void SX1280Driver::Begin()
 
 }
 
-void ICACHE_RAM_ATTR SX1280Driver::Config(SX1280_RadioLoRaBandwidths_t bw, SX1280_RadioLoRaSpreadingFactors_t sf, SX1280_RadioLoRaCodingRates_t cr, uint32_t freq, uint8_t PreambleLength)
+void ICACHE_RAM_ATTR SX1280Driver::Config(SX1280_RadioLoRaBandwidths_t bw, SX1280_RadioLoRaSpreadingFactors_t sf, SX1280_RadioLoRaCodingRates_t cr, 
+                                            uint32_t freq, uint8_t PreambleLength)
 {
     this->SetMode(SX1280_MODE_STDBY_XOSC);
     ConfigModParams(bw, sf, cr);
     #ifdef USE_HARDWARE_CRC
-    SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, 8, SX1280_LORA_CRC_ON, SX1280_LORA_IQ_NORMAL); // TODO don't make static etc.
+    SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1280_LORA_CRC_ON, SX1280_LORA_IQ_NORMAL); // TODO don't make static etc.
     #else
-    SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, 8, SX1280_LORA_CRC_OFF, SX1280_LORA_IQ_NORMAL); // TODO don't make static etc.
+    SetPacketParams(PreambleLength, SX1280_LORA_PACKET_IMPLICIT, OTA_PACKET_LENGTH, SX1280_LORA_CRC_OFF, SX1280_LORA_IQ_NORMAL); // TODO don't make static etc.
     #endif
 
     SetFrequency(freq);
@@ -116,7 +118,7 @@ uint16_t ICACHE_RAM_ATTR SX1280Driver::getPowerMw()
 {
     // for e28-20, PA output is +22dBm of the pre-PA setting, up to a max of -2 input.
     // convert from dBm to mW
-    uint16_t mw = pow10(float(currPWR+22)/10.0f);
+    uint16_t mw = powf(10, float(currPWR+22)/10.0f);
     return mw;
 }
 
@@ -147,7 +149,8 @@ void ICACHE_RAM_ATTR SX1280Driver::SetOutputPower(int8_t power)
     return;
 }
 
-void SX1280Driver::SetPacketParams(uint8_t PreambleLength, SX1280_RadioLoRaPacketLengthsModes_t HeaderType, uint8_t PayloadLength, SX1280_RadioLoRaCrcModes_t crc, SX1280_RadioLoRaIQModes_t InvertIQ)
+void SX1280Driver::SetPacketParams(uint8_t PreambleLength, SX1280_RadioLoRaPacketLengthsModes_t HeaderType, uint8_t PayloadLength,
+                                    SX1280_RadioLoRaCrcModes_t crc, SX1280_RadioLoRaIQModes_t InvertIQ)
 {
     uint8_t buf[8];
 
@@ -247,7 +250,7 @@ void SX1280Driver::ConfigModParams(SX1280_RadioLoRaBandwidths_t bw, SX1280_Radio
     // Care must therefore be taken to ensure that modulation parameters are set using the command
     // SetModulationParam() only after defining the packet type SetPacketType() to be used
 
-    WORD_ALIGNED_ATTR uint8_t rfparams[4] = {0}; //TODO make word alignmed
+    WORD_ALIGNED_ATTR uint8_t rfparams[4] = {0};
 
     rfparams[0] = SX1280_RADIO_SET_MODULATIONPARAMS;
     rfparams[1] = (uint8_t)sf;
@@ -393,7 +396,7 @@ void SX1280Driver::RXnbISR()
     #endif
 
     uint8_t FIFOaddr = instance->GetRxBufferAddr();
-    hal.ReadBuffer(FIFOaddr, instance->RXdataBuffer, 8);
+    hal.ReadBuffer(FIFOaddr, instance->RXdataBuffer, OTA_PACKET_LENGTH);
     instance->RXdoneCallback();
 }
 
@@ -436,19 +439,19 @@ void ICACHE_RAM_ATTR SX1280Driver::GetStatus()
 
 bool ICACHE_RAM_ATTR SX1280Driver::GetFrequencyErrorbool()
 {
-    //uint8_t val = hal.ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB);
-    //uint8_t val1 = hal.ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 1);
-    //uint8_t val2 = hal.ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 2);
-    uint8_t regEFI[3];
+    // //uint8_t val = hal.ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB);
+    // //uint8_t val1 = hal.ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 1);
+    // //uint8_t val2 = hal.ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB + 2);
+    // uint8_t regEFI[3];
 
-    hal.ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB, regEFI, 3);
+    // hal.ReadRegister(SX1280_REG_LR_ESTIMATED_FREQUENCY_ERROR_MSB, regEFI, 3);
 
-    //Serial.println(val);
-    //Serial.println(val1);
-    //Serial.println(val2);
-    Serial.println(regEFI[0]);
-    Serial.println(regEFI[1]);
-    Serial.println(regEFI[2]);
+    // //Serial.println(val);
+    // //Serial.println(val1);
+    // //Serial.println(val2);
+    // Serial.println(regEFI[0]);
+    // Serial.println(regEFI[1]);
+    // Serial.println(regEFI[2]);
 
     //bool result = (val & 0b00001000) >> 3;
     //return result; // returns true if pos freq error, neg if false

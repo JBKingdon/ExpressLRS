@@ -307,9 +307,9 @@ void ICACHE_RAM_ATTR HandleSendTelemetryResponse()
 
     Radio.TXdataBuffer[6] = (crsf.TLMbattSensor.voltage & 0x00FF);
 
-    uint8_t crc = CalcCRC(Radio.TXdataBuffer, 7) + CRCCaesarCipher;
-    Radio.TXdataBuffer[7] = crc;
-    Radio.TXnb(Radio.TXdataBuffer, 8);
+    uint8_t crc = CalcCRC(Radio.TXdataBuffer, OTA_PACKET_LENGTH-1) + CRCCaesarCipher;
+    Radio.TXdataBuffer[OTA_PACKET_LENGTH-1] = crc;
+    Radio.TXnb(Radio.TXdataBuffer, OTA_PACKET_LENGTH);
 
     return;
 }
@@ -532,8 +532,8 @@ void ICACHE_RAM_ATTR UnpackMSPData()
 void ICACHE_RAM_ATTR ProcessRFPacket()
 {
     beginProcessing = micros();
-    uint8_t calculatedCRC = CalcCRC(Radio.RXdataBuffer, 7) + CRCCaesarCipher;
-    uint8_t inCRC = Radio.RXdataBuffer[7];
+    uint8_t calculatedCRC = CalcCRC(Radio.RXdataBuffer, OTA_PACKET_LENGTH-1) + CRCCaesarCipher;
+    uint8_t inCRC = Radio.RXdataBuffer[OTA_PACKET_LENGTH-1];
     uint8_t type = Radio.RXdataBuffer[0] & 0b11;
     uint8_t packetAddr = (Radio.RXdataBuffer[0] & 0b11111100) >> 2;
 
@@ -541,18 +541,20 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
 
     if (inCRC != calculatedCRC)
     {
-        // Serial.println("CRC error");
         crcErrorCount++;
 
-        // #ifndef DEBUG_SUPPRESS
+        #ifndef DEBUG_SUPPRESS
+        Serial.println("CRC error");
         // Serial.print("CRC error on RF packet: ");
-        // for (int i = 0; i < 8; i++)
+        // for (int i = 0; i < OTA_PACKET_LENGTH; i++)
         // {
         //     Serial.print(Radio.RXdataBuffer[i], HEX);
         //     Serial.print(",");
+        //     Radio.RXdataBuffer[i] = i+10;
         // }
         // Serial.println("");
-        // #endif
+        #endif
+
         return;
     }
 
@@ -619,9 +621,17 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
         // UnpackMSPData();
         break;
 
-    case TLM_PACKET: //telemetry packet from master
+    case RC_HIRES_DATA:
+        // Serial.println("hires packet");
 
-        // not implimented yet
+        #ifdef USE_HIRES_DATA
+        UnpackHiResChannelData(Radio.RXdataBuffer, &crsf);
+
+        if (connectionState == connected) {
+            crsf.sendHiResRCFrameToFC();
+        }
+        #endif // USE_HIRES_DATA
+        
         break;
 
     case SYNC_PACKET: //sync packet from master

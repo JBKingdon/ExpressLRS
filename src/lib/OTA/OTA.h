@@ -8,15 +8,28 @@
 // 01 -> msp data packet
 // 11 -> tlm packet
 // 10 -> sync packet with hop data
-#define RC_DATA_PACKET 0b00
+#define RC_DATA_PACKET  0b00
 #define MSP_DATA_PACKET 0b01
-#define TLM_PACKET 0b11
-#define SYNC_PACKET 0b10
+#define SYNC_PACKET     0b10
+#define TLM_PACKET      0b11
+#define RC_HIRES_DATA   0b11  // NB Same as TLM_PACKET since we don't use that value for TX -> RX packets
+
+#ifdef USE_HIRES_DATA
+
+#define OTA_PACKET_LENGTH 9
+
+#else
+
+#define OTA_PACKET_LENGTH 8
+
+#endif // USE_HIRES_DATA
 
 #if defined HYBRID_SWITCHES_8 or defined UNIT_TEST
 
 void GenerateChannelDataHybridSwitch8(volatile uint8_t* Buffer, CRSF *crsf, uint8_t addr);
 void UnpackChannelDataHybridSwitches8(volatile uint8_t* Buffer, CRSF *crsf);
+void UnpackHiResChannelData(volatile uint8_t* Buffer, CRSF *crsf);
+
 
 #endif // HYBRID_SWITCHES_8
 
