@@ -16,6 +16,8 @@
 extern uint8_t UID[6];
 extern uint8_t CRCCaesarCipher;
 extern uint8_t DeviceAddr;
+extern uint16_t CRCInitializer;
+
 
 typedef enum {
     DIV_NONE,   // no antenna switching

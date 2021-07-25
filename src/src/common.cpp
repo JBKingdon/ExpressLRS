@@ -153,6 +153,9 @@ uint8_t UID[6] = {MY_UID};
 uint8_t CRCCaesarCipher = UID[4];
 uint8_t DeviceAddr = UID[5] & 0b111111; // temporarily based on uid until listen before assigning method merged
 
+uint16_t CRCInitializer = (UID[4] << 8) | UID[5];
+
+
 #define RSSI_FLOOR_NUM_READS 5 // number of times to sweep the noise foor to get avg. RSSI reading
 #define MEDIAN_SIZE 20
 

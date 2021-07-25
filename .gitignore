@@ -7,3 +7,14 @@ src/python/__pycache__/xmodem.cpython-37.pyc
 src/python/__pycache__/xmodem.cpython-37.pyc
 src/python/__pycache__/xmodem.cpython-37.pyc
 src/user_defines.txt
+*.zip
+*.ZIP
+PCB/
+STL/
+analysis/
+binaries/
+logs/
+nogit/
+old/
+src/lib/esp8266-oled-ssd1306-master/
+.vscode/

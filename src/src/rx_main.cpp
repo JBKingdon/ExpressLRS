@@ -3,6 +3,7 @@
 #include "utils.h"
 #include "common.h"
 #include "LowPassFilter.h"
+#include "crc.h"
 
 #if defined(Regulatory_Domain_AU_915) || defined(Regulatory_Domain_EU_868) || defined(Regulatory_Domain_FCC_915) || defined(Regulatory_Domain_AU_433) || defined(Regulatory_Domain_EU_433)
 #include "SX127xDriver.h"
@@ -56,6 +57,9 @@ int8_t lastPacketRSSI[2];   // last RSSI for a successful packet on each antenna
 // int8_t lastRXrssi=0;
 
 hwTimer hwTimer;
+
+#define ELRS_CRC14_POLY 0x2E57 // 0x372B
+GENERIC_CRC14 ota_crc(ELRS_CRC14_POLY);
 
 CRSF crsf(Serial); //pass a serial port object to the class for it to use
 
@@ -307,9 +311,13 @@ void ICACHE_RAM_ATTR HandleSendTelemetryResponse()
 
     Radio.TXdataBuffer[6] = (crsf.TLMbattSensor.voltage & 0x00FF);
 
-    uint8_t crc = CalcCRC(Radio.TXdataBuffer, OTA_PACKET_LENGTH-1) + CRCCaesarCipher;
-    Radio.TXdataBuffer[OTA_PACKET_LENGTH-1] = crc;
-    Radio.TXnb(Radio.TXdataBuffer, OTA_PACKET_LENGTH);
+    uint16_t crc = ota_crc.calc(Radio.TXdataBuffer, 7, CRCInitializer);
+    Radio.TXdataBuffer[0] |= (crc >> 6) & 0b11111100;
+    Radio.TXdataBuffer[OTA_PACKET_LENGTH-1] = crc & 0xFF;
+
+    // uint8_t crc = CalcCRC(Radio.TXdataBuffer, OTA_PACKET_LENGTH-1) + CRCCaesarCipher;
+    // Radio.TXdataBuffer[OTA_PACKET_LENGTH-1] = crc;
+    // Radio.TXnb(Radio.TXdataBuffer, OTA_PACKET_LENGTH);
 
     return;
 }
@@ -532,10 +540,14 @@ void ICACHE_RAM_ATTR UnpackMSPData()
 void ICACHE_RAM_ATTR ProcessRFPacket()
 {
     beginProcessing = micros();
-    uint8_t calculatedCRC = CalcCRC(Radio.RXdataBuffer, OTA_PACKET_LENGTH-1) + CRCCaesarCipher;
     uint8_t inCRC = Radio.RXdataBuffer[OTA_PACKET_LENGTH-1];
     uint8_t type = Radio.RXdataBuffer[0] & 0b11;
-    uint8_t packetAddr = (Radio.RXdataBuffer[0] & 0b11111100) >> 2;
+
+    // uint8_t packetAddr = (Radio.RXdataBuffer[0] & 0b11111100) >> 2; // replaced by the new larger CRC
+    // uint8_t calculatedCRC = CalcCRC(Radio.RXdataBuffer, OTA_PACKET_LENGTH-1) + CRCCaesarCipher;
+
+    Radio.RXdataBuffer[0] = type;   // have to clear out the crc bits before doing the calculation
+    uint16_t calculatedCRC = ota_crc.calc(Radio.RXdataBuffer, OTA_PACKET_LENGTH-1, CRCInitializer);
 
     // Serial.println("packet!");
 
@@ -558,13 +570,13 @@ void ICACHE_RAM_ATTR ProcessRFPacket()
         return;
     }
 
-    if (packetAddr != DeviceAddr)
-    {
-        #ifndef DEBUG_SUPPRESS
-        Serial.println("Wrong device address on RF packet");
-        #endif
-        return;
-    }
+    // if (packetAddr != DeviceAddr)
+    // {
+    //     #ifndef DEBUG_SUPPRESS
+    //     Serial.println("Wrong device address on RF packet");
+    //     #endif
+    //     return;
+    // }
 
     LastValidPacketPrevMicros = LastValidPacketMicros;
     LastValidPacketMicros = beginProcessing;
