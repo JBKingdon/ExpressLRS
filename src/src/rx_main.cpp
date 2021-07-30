@@ -311,13 +311,16 @@ void ICACHE_RAM_ATTR HandleSendTelemetryResponse()
 
     Radio.TXdataBuffer[6] = (crsf.TLMbattSensor.voltage & 0x00FF);
 
-    uint16_t crc = ota_crc.calc(Radio.TXdataBuffer, 7, CRCInitializer);
+    // zero out the addr
+    Radio.TXdataBuffer[0] &= 0b11;
+    uint16_t crc = ota_crc.calc(Radio.TXdataBuffer, OTA_PACKET_LENGTH-1, CRCInitializer);
     Radio.TXdataBuffer[0] |= (crc >> 6) & 0b11111100;
     Radio.TXdataBuffer[OTA_PACKET_LENGTH-1] = crc & 0xFF;
 
     // uint8_t crc = CalcCRC(Radio.TXdataBuffer, OTA_PACKET_LENGTH-1) + CRCCaesarCipher;
     // Radio.TXdataBuffer[OTA_PACKET_LENGTH-1] = crc;
-    // Radio.TXnb(Radio.TXdataBuffer, OTA_PACKET_LENGTH);
+
+    Radio.TXnb(Radio.TXdataBuffer, OTA_PACKET_LENGTH);
 
     return;
 }
@@ -540,7 +543,8 @@ void ICACHE_RAM_ATTR UnpackMSPData()
 void ICACHE_RAM_ATTR ProcessRFPacket()
 {
     beginProcessing = micros();
-    uint8_t inCRC = Radio.RXdataBuffer[OTA_PACKET_LENGTH-1];
+    // uint8_t inCRC = Radio.RXdataBuffer[OTA_PACKET_LENGTH-1];
+    uint16_t inCRC = Radio.RXdataBuffer[OTA_PACKET_LENGTH-1] + ((Radio.RXdataBuffer[0] & 0b11111100) << 6);
     uint8_t type = Radio.RXdataBuffer[0] & 0b11;
 
     // uint8_t packetAddr = (Radio.RXdataBuffer[0] & 0b11111100) >> 2; // replaced by the new larger CRC
