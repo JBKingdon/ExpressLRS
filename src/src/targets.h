@@ -200,7 +200,6 @@ https://github.com/jaxxzer
 #define GPIO_PIN_BUSY         5
 #define GPIO_PIN_DIO0        -1 // does not exist on sx1280
 #define GPIO_PIN_DIO1         4
-#define GPIO_PIN_DIO2         9
 #define GPIO_PIN_MOSI        13
 #define GPIO_PIN_MISO        12
 #define GPIO_PIN_SCK         14
@@ -209,8 +208,9 @@ https://github.com/jaxxzer
 #define GPIO_PIN_RCSIGNAL_TX -1
 #define GPIO_PIN_LED         16
 #define GPIO_PIN_BUTTON       0
-// #define ANTENNA_SWITCH GPIO_PIN_BUTTON   // enables diversity when defined
+#define ANTENNA_SWITCH GPIO_PIN_BUTTON   // enables diversity when defined
 // #define ANTENNA_SWITCH_CMP   10
+// #define GPIO_PIN_DIO2         9 // XXX only exists on bare 8285 rxes
 #define timerOffset          -1
 #define MAX_PRE_PA_POWER     13
 #endif
