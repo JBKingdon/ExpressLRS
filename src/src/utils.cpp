@@ -25,7 +25,8 @@ void rngSeed(long newSeed)
 unsigned int rngN(unsigned int max)
 {
     unsigned long x = rng();
-    unsigned int result = (x * max) / RNG_MAX;
+    unsigned int result = (x * max) / RNG_MAX; // XXX WRONG - should be as below, but will require a recompile and update for all rx & tx
+    // unsigned int result = (x * max) / (RNG_MAX + 1);
     return result;
 }
 
