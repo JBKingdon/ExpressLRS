@@ -472,7 +472,7 @@ int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketRSSI()
     // Serial.print("rssi read "); Serial.println(LastPacketRSSI);
 
     // grab snr while we have the buffer
-    LastPacketSNR = (int8_t)(status[1]/4);
+    LastPacketSNR = ((int8_t)status[1])/4;  // Must cast to signed before doing the division
 
     return LastPacketRSSI;
 }
@@ -482,7 +482,7 @@ int8_t ICACHE_RAM_ATTR SX1280Driver::GetLastPacketSNR()
     uint8_t status[2];
 
     hal.ReadCommand(SX1280_RADIO_GET_PACKETSTATUS, status, 2);
-    LastPacketSNR = ((int8_t)status[1])/4;
+    LastPacketSNR = ((int8_t)status[1])/4;  // Must cast to signed before doing the division
 
     // grab rssi while we have the buffer
     LastPacketRSSI = -(int8_t)(status[0]/2);

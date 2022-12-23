@@ -69,6 +69,8 @@ LPF LPF_Offset(2);
 LPF LPF_OffsetDx(4);
 LPF LPF_UplinkRSSI0(5);
 LPF LPF_UplinkRSSI1(5);
+
+LPF LPF_UplinkSNR(8);
 ////////////////////////////
 
 uint8_t scanIndex = RATE_DEFAULT;
@@ -181,6 +183,8 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
             break;
     }
 
+    LPF_UplinkSNR.update((int32_t)Radio.LastPacketSNR * 10); // value was set during call to GetLastPacketRSSI()
+
     #ifndef USE_ELRS_CRSF_EXTENSIONS
     crsf.PackedRCdataOut.ch15 = UINT10_to_CRSF(map(constrain(LastRSSI, -100, -50), -100, -50, 0, 1023));
     crsf.PackedRCdataOut.ch14 = UINT10_to_CRSF(fmap(linkQuality, 0, 100, 0, 1023));
@@ -198,6 +202,17 @@ void ICACHE_RAM_ATTR getRFlinkInfo()
     #else
     crsf.LinkStatistics.rssi1 = 255;    // special value that we can use in BF to suppress the diversity rssi display
     #endif
+
+    // better constrain the range
+    if (LPF_UplinkSNR.SmoothDataINT > 127)
+    {
+        crsf.LinkStatistics.snr = 127;
+    } else if (LPF_UplinkSNR.SmoothDataINT < -127) { // leave -128 as a 'special' value to indicate not in use?
+        crsf.LinkStatistics.snr = -127;
+    } else {
+        crsf.LinkStatistics.snr = LPF_UplinkSNR.SmoothDataINT;
+    }
+
     // crsf.LinkStatistics.snr = Radio.LastPacketSNR; // * 10; Swapped out snr for rssi1
     crsf.LinkStatistics.link_quality = linkQuality | (antenna << 7); // carry the current antenna info in the top bit of lq
     crsf.LinkStatistics.rf_Mode = RATE_MAX - ExpressLRS_currAirRate_Modparams->index;
